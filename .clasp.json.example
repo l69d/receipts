@@ -1,0 +1,13 @@
+{
+  "scriptId": "PASTE_THE_SCRIPT_ID_HERE",
+  "rootDir": "apps-script",
+
+  "//": "scriptExtensions: clasp writes pulled server files with the FIRST extension listed, and defaults to .js -",
+  "//1": "a pull would rewrite Code.gs as Code.js, which git reads as a delete + add. .gs first keeps a pull a no-op.",
+  "scriptExtensions": [".gs", ".js"],
+  "htmlExtensions": [".html"],
+
+  "//2": "The deployment npm run release repoints - the live link. Never make a new one: each new deployment is a",
+  "//3": "new URL. npm run deployments lists them; use the id people already have.",
+  "deploymentId": "PASTE_THE_LIVE_DEPLOYMENT_ID_HERE"
+}

@@ -1,0 +1,201 @@
+<script>
+// Receipts' numbers, worked out from the payload. No DOM - the suites run this file in node.
+// An entry is one log row. A thread is every entry of one project (or item, when project is blank); its status is its
+// latest entry's. Weeks run Monday to Sunday and are named by their Monday.
+var Model = (function () {
+  var STATUSES = ['Completed', 'In Progress', 'Not yet Started', 'Deprioritized'];
+  var OPEN = ['In Progress', 'Not yet Started'];
+  var KINDS = ['Feature', 'Fix', 'Dashboard', 'Analysis', 'Pipeline', 'Doc', 'Deck', 'Review'];
+  // one hue per stream, in the streams tab's order
+  var PALETTE = ['#2a78d6', '#6250d6', '#0f8f80', '#eb6834', '#c48a00', '#52514e', '#b0418e', '#3f8f3f'];
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  function addDays(iso, n) { var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+  function days(a, b) { return Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 864e5); }  // b - a
+  function monday(iso) { return addDays(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7)); }
+  function isoWeek(iso) {
+    var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 3 - (d.getUTCDay() + 6) % 7);  // the week's Thursday
+    return 1 + Math.floor((d - Date.UTC(d.getUTCFullYear(), 0, 1)) / 864e5 / 7);
+  }
+  function dm(iso) { return +iso.slice(8) + ' ' + MON[+iso.slice(5, 7) - 1]; }
+  function weekLabel(mon) { var sun = addDays(mon, 6); return { week: 'W' + isoWeek(mon), range: (mon.slice(5, 7) === sun.slice(5, 7) ? +mon.slice(8) : dm(mon)) + '–' + dm(sun), start: dm(mon) }; }
+  // what a link is, from its address
+  var LINK_TYPES = [[/docs\.google\.com\/spreadsheets/, 'Sheet'], [/docs\.google\.com\/presentation/, 'Slides'], [/docs\.google\.com\/document/, 'Doc'],
+    [/script\.google\.com/, 'Web app'], [/(lookerstudio|datastudio)\.google\.com/, 'Looker Studio'], [/rowzero\.com/, 'RowZero'], [/github\.com/, 'GitHub'],
+    [/drive\.google\.com/, 'Drive']];
+  /**
+   * A link cell -> [{url, label, type}]. One link a line, written "Label | url"; any text before a URL on its line is its
+   * label (else its type). Bare URLs work too; repeats are dropped.
+   */
+  function links(text) {
+    var out = [], seen = {};
+    String(text || '').split(/\n/).forEach(function (line) {
+      var re = /https?:\/\/[^\s|]+/g, m, last = 0;
+      while ((m = re.exec(line))) {
+        var url = m[0].replace(/[),.;]+$/, ''), label = line.slice(last, m.index).replace(/^[\s|,;:·–-]+|[\s|,;:·–-]+$/g, '');
+        last = re.lastIndex;
+        if (seen[url]) continue;
+        seen[url] = 1;
+        var t = LINK_TYPES.filter(function (x) { return x[0].test(url); })[0], type = t ? t[1] : url.split('/')[2].replace(/^www\./, '');
+        out.push({ url: url, label: label || type, type: type });
+      }
+    });
+    return out;
+  }
+  function isOpen(s) { return OPEN.indexOf(s) >= 0 || STATUSES.indexOf(s) < 0; }  // an unknown status still needs doing
+  function later(a, b) { return a.date > b.date || (a.date === b.date && a.row > b.row); }
+
+  function load(P) {
+    var about = {}, names = [];
+    (P.streams || []).forEach(function (s) { if (names.indexOf(s[0]) < 0) { names.push(s[0]); about[s[0]] = s[1] || ''; } });
+    var entries = (P.entries || []).map(function (r, i) {
+      return { date: r[0], item: r[1], project: r[2] || r[1], stream: r[3] || 'Other', kind: r[4] || 'Other', status: r[5] || 'In Progress',
+        notes: r[6] || '', impact: r[7] || '', link: r[8] || '', links: links(r[8]), who: r[9] || '', row: r[10] || i + 2, week: monday(r[0]) };
+    }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.row - b.row; });
+    entries.forEach(function (e) { if (names.indexOf(e.stream) < 0) names.push(e.stream); });
+    var streams = names.map(function (n, i) { return { name: n, about: about[n] || '', color: PALETTE[i % PALETTE.length] }; });
+    var color = {}; streams.forEach(function (s) { color[s.name] = s.color; });
+    var weeks = [];
+    if (entries.length) for (var w = monday(entries[0].date), end = monday(P.asOf > entries[entries.length - 1].date ? P.asOf : entries[entries.length - 1].date); w <= end; w = addDays(w, 7)) weeks.push(w);
+    var by = {}, threads = [];
+    entries.forEach(function (e) {
+      var t = by[e.project];
+      if (!t) { t = by[e.project] = { name: e.project, entries: [], first: e.date, done: 0, impacts: [] }; threads.push(t); }
+      t.entries.push(e);
+      if (e.status === 'Completed') t.done++;
+      if (e.impact && e.status === 'Completed') t.impacts.push(e);
+    });
+    threads.forEach(function (t) {
+      var L = t.entries.reduce(function (a, b) { return later(b, a) ? b : a; });
+      t.latest = L; t.last = L.date; t.status = L.status; t.stream = L.stream; t.open = isOpen(L.status);
+      t.note = L.notes || L.item;
+    });
+    return { asOf: P.asOf, entries: entries, streams: streams, color: color, weeks: weeks, threads: threads, ideas: P.ideas || [] };
+  }
+
+  function done(M, from, to) { return M.entries.filter(function (e) { return e.status === 'Completed' && e.date >= from && e.date <= to; }); }
+  function distinct(list, key) { var s = {}; list.forEach(function (x) { s[x[key]] = 1; }); return Object.keys(s).length; }
+
+  /** Landing tab: tiles, the facts as data, weekly completions by stream, what is open, what shipped lately. */
+  function overview(M) {
+    var a = M.asOf, wk = monday(a), last30 = addDays(a, -29);
+    var thisWeek = done(M, wk, a), lastWeek = done(M, addDays(wk, -7), addDays(wk, -1)), month = done(M, last30, a);
+    var touched = M.entries.filter(function (e) { return e.date >= last30 && e.date <= a; });
+    var open = now(M).open;
+    var tiles = [
+      { k: 'Shipped this week', v: thisWeek.length, d: lastWeek.length + ' last week' },
+      { k: 'Shipped, last 30 days', v: month.length, d: 'across ' + distinct(month, 'stream') + ' stream' + (distinct(month, 'stream') === 1 ? '' : 's') },
+      { k: 'In progress', v: open.length, d: open.length ? 'oldest started ' + Math.max.apply(null, open.map(function (t) { return t.age; })) + ' days ago' : 'nothing open' },
+      { k: 'Projects touched', v: distinct(touched, 'project'), d: 'in the last 30 days' }
+    ];
+    var perStream = M.streams.map(function (s) {
+      return { stream: s.name, color: s.color, n: month.filter(function (e) { return e.stream === s.name; }).length };
+    }).filter(function (x) { return x.n; }).sort(function (x, y) { return y.n - x.n; });
+    var series = M.streams.map(function (s) {
+      return { stream: s.name, color: s.color, counts: M.weeks.map(function (w) {
+        return M.entries.filter(function (e) { return e.week === w && e.stream === s.name && e.status === 'Completed' && e.date <= a; }).length;
+      }) };
+    });
+    var totals = M.weeks.map(function (w, i) { return series.reduce(function (t, s) { return t + s.counts[i]; }, 0); });
+    var best = totals.length ? totals.indexOf(Math.max.apply(null, totals)) : -1;
+    return {
+      tiles: tiles, series: series, totals: totals,
+      facts: { thisWeek: thisWeek.length, lastWeek: lastWeek.length, month: month.length, perStream: perStream,
+        bestWeek: best >= 0 && totals[best] ? { week: M.weeks[best], n: totals[best] } : null,
+        oldest: open.length ? open.reduce(function (x, y) { return y.age > x.age ? y : x; }) : null,
+        quiet: open.filter(function (t) { return t.quiet >= 7; }) },
+      open: open,
+      recent: done(M, addDays(a, -6), a).slice().reverse()
+    };
+  }
+
+  /** Threads still open, latest update first, with how long they have run; parked ones apart. */
+  function now(M) {
+    var view = function (t) { return { name: t.name, stream: t.stream, status: t.status, first: t.first, last: t.last, age: days(t.first, M.asOf), quiet: days(t.last, M.asOf), note: t.note, n: t.entries.length, done: t.done, latest: t.latest }; };
+    var order = function (x, y) { return x.last < y.last ? 1 : x.last > y.last ? -1 : y.latest.row - x.latest.row; };
+    return {
+      open: M.threads.filter(function (t) { return t.open; }).map(view).sort(order),
+      parked: M.threads.filter(function (t) { return t.status === 'Deprioritized'; }).map(view).sort(order)
+    };
+  }
+
+  /** Entries, newest first, grouped by week. f: {stream, status ('' = all; 'Open' = in progress or not started), q}. */
+  function timeline(M, f) {
+    f = f || {};
+    var q = String(f.q || '').trim().toLowerCase(), groups = [], at = {};
+    M.entries.filter(function (e) {
+      if (f.stream && e.stream !== f.stream) return false;
+      if (f.status === 'Open' ? !isOpen(e.status) : f.status && e.status !== f.status) return false;
+      return !q || [e.item, e.project, e.notes, e.impact, e.who, e.kind].join(' ').toLowerCase().indexOf(q) >= 0;
+    }).slice().reverse().forEach(function (e) {
+      if (!(e.week in at)) { at[e.week] = groups.length; groups.push({ week: e.week, entries: [] }); }
+      groups[at[e.week]].entries.push(e);
+    });
+    return groups;
+  }
+
+  /** What completed work changed. f: {stream}. */
+  function impact(M, f) {
+    f = f || {};
+    var shipped = M.entries.filter(function (e) { return e.status === 'Completed' && (!f.stream || e.stream === f.stream); });
+    var kinds = KINDS.concat(shipped.map(function (e) { return e.kind; }).filter(function (k, i, a) { return KINDS.indexOf(k) < 0 && a.indexOf(k) === i; }));
+    return {
+      shipped: shipped.length,
+      byKind: kinds.map(function (k) {
+        var es = shipped.filter(function (e) { return e.kind === k; });
+        return { kind: k, n: es.length, projects: distinct(es, 'project') };
+      }).filter(function (x) { return x.n; }),
+      lines: shipped.filter(function (e) { return e.impact; }).slice().reverse(),
+      missing: shipped.filter(function (e) { return !e.impact; }).length
+    };
+  }
+
+  /** One card per stream. */
+  function streams(M) {
+    var last30 = addDays(M.asOf, -29);
+    return M.streams.map(function (s) {
+      var es = M.entries.filter(function (e) { return e.stream === s.name; }), ts = M.threads.filter(function (t) { return t.stream === s.name; });
+      return { name: s.name, about: s.about, color: s.color, entries: es.length,
+        done: es.filter(function (e) { return e.status === 'Completed'; }).length,
+        done30: es.filter(function (e) { return e.status === 'Completed' && e.date >= last30 && e.date <= M.asOf; }).length,
+        open: ts.filter(function (t) { return t.open; }).length,
+        last: es.length ? es[es.length - 1].date : null,
+        weekly: M.weeks.map(function (w) { return es.filter(function (e) { return e.week === w && e.status === 'Completed'; }).length; }),
+        threads: ts.slice().sort(function (x, y) { return (y.open - x.open) || (x.last < y.last ? 1 : x.last > y.last ? -1 : 0); })
+          .map(function (t) { return { name: t.name, status: t.status, last: t.last, n: t.entries.length }; }),
+        impacts: es.filter(function (e) { return e.status === 'Completed' && e.impact; }).slice(-3).reverse() };
+    }).filter(function (s) { return s.entries; });
+  }
+
+  /**
+   * What people can open: every project with a link, latest work first, its links newest first (one card each, a link
+   * listed once). f: {stream}. byType: how many links of each type.
+   */
+  function outputs(M, f) {
+    f = f || {};
+    var cards = M.threads.filter(function (t) { return !f.stream || t.stream === f.stream; }).map(function (t) {
+      var seen = {}, ls = [];
+      t.entries.slice().reverse().forEach(function (e) {
+        e.links.forEach(function (l) { if (!seen[l.url]) { seen[l.url] = 1; ls.push({ url: l.url, label: l.label, type: l.type, date: e.date, item: e.item }); } });
+      });
+      var imp = t.impacts.length ? t.impacts[t.impacts.length - 1].impact : '';
+      return { name: t.name, stream: t.stream, status: t.status, last: t.last, links: ls, impact: imp };
+    }).filter(function (c) { return c.links.length; }).sort(function (x, y) { return x.last < y.last ? 1 : x.last > y.last ? -1 : 0; });
+    var byType = {};
+    cards.forEach(function (c) { c.links.forEach(function (l) { byType[l.type] = (byType[l.type] || 0) + 1; }); });
+    return { cards: cards, links: cards.reduce(function (n, c) { return n + c.links.length; }, 0),
+      byType: Object.keys(byType).map(function (k) { return { type: k, n: byType[k] }; }).sort(function (a, b) { return b.n - a.n || (a.type < b.type ? -1 : 1); }) };
+  }
+
+  /** Ideas grouped by stream, open first. */
+  function ideas(M) {
+    var rank = function (s) { return s === 'Open' || !s ? 0 : s === 'Picked up' ? 1 : 2; };
+    return M.ideas.map(function (r) { return { stream: r[0] || 'Other', idea: r[1], status: r[2] || 'Open' }; })
+      .sort(function (a, b) { return (a.stream < b.stream ? -1 : a.stream > b.stream ? 1 : 0) || rank(a.status) - rank(b.status); });
+  }
+
+  return { STATUSES: STATUSES, KINDS: KINDS, addDays: addDays, days: days, monday: monday, isoWeek: isoWeek, dm: dm, weekLabel: weekLabel, isOpen: isOpen,
+    links: links, load: load, overview: overview, now: now, timeline: timeline, impact: impact, outputs: outputs, streams: streams, ideas: ideas };
+})();
+if (typeof module !== 'undefined') module.exports = Model;
+</script>

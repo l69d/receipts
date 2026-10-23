@@ -1,0 +1,21 @@
+{
+  "name": "receipts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Receipts - show the receipts for your work. A Google Sheet + web app of what you are working on, what shipped and what it changed, with a link to every deliverable - kept up to date by Claude Code.",
+  "license": "MIT",
+  "scripts": {
+    "setup": "bash tools/setup.sh",
+    "test": "npm --prefix tests test",
+    "preview": "npm --prefix tests run preview",
+    "push": "bash tools/clasp-push.sh",
+    "release": "bash tools/clasp-release.sh",
+    "diff": "bash tools/clasp-diff.sh",
+    "status": "clasp status",
+    "open": "clasp open-script",
+    "deployments": "clasp list-deployments"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.4.1"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "receipts-tests",
+  "private": true,
+  "description": "Suites for Receipts - npm test (needs python3 with pandas, and node)",
+  "scripts": {
+    "build": "python3 build_preview.py",
+    "preview": "open preview.html || xdg-open preview.html",
+    "shots": "node shots.js",
+    "test": "python3 build_preview.py && node run_all.js"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}
