@@ -20,6 +20,14 @@ const fs = require("fs");
   await page.fill("#f-item", "Churn drivers deep dive");
   await page.screenshot({ path: path.join(out, "new-task.png") });
   await page.keyboard.press("Escape");
+  await page.click('#tabs button[data-tab="notes"]');
+  for (const n of ["Ask Sam about the churn deck\nneeds the Q3 cohorts before Thursday", "Check the price-match list with the category team"]) {
+    await page.fill("#n-text", n);
+    await page.click("#n-save");
+    await page.waitForFunction((k) => document.querySelectorAll("#n-list .note-card").length === k, n.startsWith("Ask") ? 1 : 2);
+  }
+  await page.fill("#n-text", "Idea: weekly digest of what shipped");
+  await page.screenshot({ path: path.join(out, "notes.png"), fullPage: true });
   const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
   await phone.goto("file://" + path.join(__dirname, "preview.html"));
   await phone.waitForSelector("#ov-tiles .tile");

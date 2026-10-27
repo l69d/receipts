@@ -123,6 +123,20 @@
   dialog .msg{margin-right:auto; font-size:13px;}
   .toast{position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--ink-1); color:#fff; padding:8px 14px; border-radius:10px; font-size:13.5px; z-index:3000;}
 
+  /* the notepad */
+  .composer textarea, .note-card textarea{font:inherit; font-size:14px; width:100%; min-height:84px; resize:vertical; border:1px solid var(--border);
+         border-radius:8px; padding:8px 10px; background:#fff; color:var(--ink-1);}
+  .composer .crow, .note-card .crow{display:flex; align-items:center; gap:10px; margin-top:8px;}
+  .composer .hint{font-size:12px; color:var(--muted);}
+  .composer .msg{margin-left:auto; font-size:13px;}
+  .note-card{margin-bottom:10px; border-left:3px solid var(--border);}
+  .note-card.st-Made-a-task{border-left-color:var(--good);}
+  .note-card.st-Archived{opacity:.7;}
+  .note-card .txt{white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px;}
+  .note-card .when{font-size:12px; color:var(--muted); margin-top:6px;}
+  .note-card .acts{display:flex; flex-wrap:wrap; gap:14px; margin-top:8px;}
+  .note-card .tasked{font-size:12.5px; color:#1f6a1f; margin-top:6px;}
+
   /* a thread (Now) */
   .thread{border-left:3px solid var(--pc, var(--border));}
   .thread .name{font-weight:650; font-size:14.5px;}
@@ -165,7 +179,7 @@
   </div>
   <div class="filters">
     <div class="seg" id="tabs">
-      <button data-tab="overview">Overview</button><button data-tab="now">Now</button><button data-tab="timeline">Timeline</button><button data-tab="impact">Impact</button><button data-tab="outputs">Outputs</button><button data-tab="streams">Streams</button><button data-tab="ideas">Ideas</button>
+      <button data-tab="overview">Overview</button><button data-tab="now">Now</button><button data-tab="timeline">Timeline</button><button data-tab="impact">Impact</button><button data-tab="outputs">Outputs</button><button data-tab="streams">Streams</button><button data-tab="ideas">Ideas</button><button data-tab="notes" id="tab-notes" hidden>Notes</button>
     </div>
     <div class="frow" id="ctl">
       <span class="fgroup" id="g-stream"><span class="flabel">Stream</span><select id="stream" aria-label="Stream"></select></span>
@@ -234,6 +248,17 @@
     <h2>Ideas</h2>
     <p class="lede">Things worth doing that are not yet work items - the ideas tab of the sheet.</p>
     <div class="card tbl"><table id="id-table"></table></div>
+  </div>
+
+  <div id="notes" hidden>
+    <h2>Notes <span class="sub">· only editors of the sheet see these</span></h2>
+    <p class="lede">Jot anything down. When a note turns into work, make it a task - it goes into the log and the note remembers which task it became.</p>
+    <div class="card composer">
+      <textarea id="n-text" maxlength="5000" placeholder="Jot something down… (first line becomes the task name if you make it a task)"></textarea>
+      <div class="crow"><span class="hint">⌘ / Ctrl + Enter to save</span><span class="msg" id="n-msg"></span><button class="btn" type="button" id="n-save">Save note</button></div>
+    </div>
+    <div class="frow" style="margin:18px 0 10px"><span class="seg" id="n-filter"></span></div>
+    <div id="n-list"></div>
   </div>
 
   <p class="note">Source: the sheet's log tab, one row per piece of work - typed in the sheet or added by Claude Code. Weeks run Monday to Sunday. A project's status is its latest entry's.</p>

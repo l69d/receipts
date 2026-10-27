@@ -170,6 +170,46 @@ section("addTask: the page's + New task form");
   ok(n.grids.log && n.grids.log[1][1] === "First task" && n.grids.config, "a brand-new sheet is set up first, then the task goes in");
 }
 
+section("notes: the notepad");
+{
+  const s = loadServer(demoGrids());
+  JSON.parse(s.getData());
+  ok(!s.grids.notes, "no notes tab until the first note");
+  let P = JSON.parse(s.saveNote(JSON.stringify({ text: "  Ask Sam about the churn deck\nneeds the Q3 cohorts  " })));
+  eq(s.grids.notes[0], s.NOTE_HEAD, "the notes tab is made with its header");
+  eq(P.notes.length, 1, "the payload carries it");
+  const [id, created, updated, text, state, task] = P.notes[0];
+  ok(/^n/.test(id) && created === updated && /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(created), "an id and a created / updated stamp");
+  eq([text, state, task], ["Ask Sam about the churn deck\nneeds the Q3 cohorts", "Open", ""], "trimmed text, open, no task yet");
+  P = JSON.parse(s.saveNote(JSON.stringify({ text: "second note" })));
+  eq(P.notes.map((n) => n[3]), ["second note", "Ask Sam about the churn deck\nneeds the Q3 cohorts"], "newest first");
+  ok(P.notes[0][0] !== P.notes[1][0], "ids are unique, even within a minute");
+  P = JSON.parse(s.saveNote(JSON.stringify({ id, text: "Ask Sam about the churn deck (edited)" })));
+  eq(P.notes.find((n) => n[0] === id)[3], "Ask Sam about the churn deck (edited)", "an edit replaces the text, by id");
+  eq(s.grids.notes.length, 3, "... without adding a row");
+  const at = (fn, o) => { try { s[fn](JSON.stringify(o)); return "saved"; } catch (e) { return e.message; } };
+  ok(/empty/.test(at("saveNote", { text: "   " })), "an empty note is refused");
+  ok(/no longer/.test(at("saveNote", { id: "n-gone", text: "x" })), "editing a note that is not there is refused");
+  P = JSON.parse(s.noteState(JSON.stringify({ id, state: "Archived" })));
+  eq(P.notes.find((n) => n[0] === id)[4], "Archived", "archive");
+  P = JSON.parse(s.noteState(JSON.stringify({ id, state: "Open" })));
+  eq(P.notes.find((n) => n[0] === id)[4], "Open", "reopen");
+  ok(/A note is/.test(at("noteState", { id, state: "Deleted" })), "an unknown state is refused");
+  at("saveNote", { text: "=HYPERLINK(\"https://evil.example\")" });
+  ok(s.grids.notes.some((r) => r[3] === "'=HYPERLINK(\"https://evil.example\")"), "a note starting = stays text");
+  const n0 = s.grids.log.length;
+  P = JSON.parse(s.addTask(JSON.stringify({ item: "Churn deck", notes: "needs the Q3 cohorts", fromNote: id })));
+  eq(s.grids.log.length, n0 + 1, "Make a task: the task goes into the log");
+  eq(P.notes.find((n) => n[0] === id).slice(4), ["Made a task", "Churn deck"], "... and the note says which task it became, in the same save");
+  const v = loadServer(s.grids, "someone.else@acme.example", [USER]);
+  eq(JSON.parse(v.getData()).notes, [], "a viewer is never sent the notes");
+  let refused = "";
+  try { v.saveNote(JSON.stringify({ text: "sneaky" })); } catch (e) { refused = e.message; }
+  ok(/Only editors/.test(refused), "a viewer cannot write a note");
+  try { v.noteState(JSON.stringify({ id, state: "Archived" })); refused = ""; } catch (e) { refused = e.message; }
+  ok(/Only editors/.test(refused), "... nor archive one");
+}
+
 section("only editors get the sheet");
 {
   const P = JSON.parse(loadServer(demoGrids(), "someone.else@acme.example", [USER]).getData());

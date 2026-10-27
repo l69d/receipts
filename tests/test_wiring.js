@@ -11,7 +11,7 @@ const ids = new Set([...index.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
 const used = [...new Set([...app.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]))];
 ok(used.length > 20, "App reaches for elements by id");
 used.forEach((id) => ok(ids.has(id), `#${id} is in Index.html`));
-const tabs = ["overview", "now", "timeline", "impact", "outputs", "streams", "ideas"];
+const tabs = ["overview", "now", "timeline", "impact", "outputs", "streams", "ideas", "notes"];
 tabs.forEach((t) => ok(index.includes(`data-tab="${t}"`) && ids.has(t), `tab ${t}: a button and a panel`));
 eq(JSON.parse(/var TABS = (\[[^\]]+\])/.exec(app)[1].replace(/'/g, '"')), tabs, "App's TABS match the buttons");
 tabs.forEach((t) => ok(new RegExp(`function render${t[0].toUpperCase() + t.slice(1)}\\(`).test(app), `render${t[0].toUpperCase() + t.slice(1)} exists`));
@@ -22,6 +22,12 @@ ok(/^function getData\(/m.test(code), "Code.gs defines getData");
 ok(/^function doGet\(/m.test(code) && /^function include\(/m.test(code), "doGet and include");
 ok(/\.addTask\(JSON\.stringify\(task\)\)/.test(app) && /^function addTask\(/m.test(code), "the task form calls addTask, and Code.gs defines it");
 ok(/canEdit\(book\)\) throw/.test(code.slice(code.indexOf("function addTask("))), "addTask checks the caller is an editor before anything else");
+["saveNote", "noteState"].forEach((f) => {
+  ok(new RegExp(`call\\('${f}'`).test(app) && new RegExp(`^function ${f}\\(`, "m").test(code), `the notepad calls ${f}, and Code.gs defines it`);
+  ok(/canEdit\(book\)\) throw/.test(code.slice(code.indexOf(`function ${f}(`)).split("\nfunction ")[0]), `${f} checks the caller is an editor`);
+});
+ok(/notes: edit \? readNotes\(book, tz\) : \[\]/.test(code), "getData sends notes to editors only");
+ok(/\$\('tab-notes'\)\.hidden = !P\.canEdit/.test(app), "the Notes tab shows for editors only");
 
 section("includes");
 ["Model", "App"].forEach((n) => ok(index.includes(`<?!= include('${n}'); ?>`) && fs.existsSync(path.join(APP, n + ".html")), `Index includes ${n}`));

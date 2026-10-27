@@ -123,6 +123,22 @@ section("work dated after today (a task planned ahead)");
   eq(Model.now(m).open.map((t) => t.name), ["C"], "a future task is open work");
 }
 
+section("notes");
+{
+  const raw = [["n3", "2026-10-27 10:00", "2026-10-27 10:00", "Third\nmore detail\nand more", "Open", ""],
+    ["n2", "2026-10-26 09:00", "2026-10-26 12:00", "Second", "Made a task", "Second task"],
+    ["n1", "2026-10-25 08:00", "2026-10-25 08:00", "First", "Archived", ""]];
+  const N = Model.notes(raw);
+  eq(N.list.map((n) => n.id), ["n3"], "Open by default");
+  eq(N.counts, { Open: 1, "Made a task": 1, Archived: 1, All: 3 }, "how many in each");
+  eq(Model.notes(raw, "All").list.map((n) => n.id), ["n3", "n2", "n1"], "All, newest first as sent");
+  eq(Model.notes(raw, "Made a task").list[0].task, "Second task", "a note made into a task knows which");
+  eq([N.list[0].title, N.list[0].rest], ["Third", "more detail\nand more"], "first line -> the task's name, the rest -> its notes");
+  const long = Model.notes([["n", "", "", "x".repeat(320), "Open", ""]]).list[0];
+  eq([long.title.length, long.rest.length], [300, 20], "a first line longer than a task name spills into the notes");
+  eq(Model.notes(undefined).counts.All, 0, "no notes: nothing to show");
+}
+
 section("empty log");
 {
   const m = Model.load({ asOf: "2026-10-22", entries: [], streams: [], ideas: [] });

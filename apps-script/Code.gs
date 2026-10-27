@@ -1,7 +1,9 @@
 // Receipts - a web app bound to a Google Sheet: what you are working on, what you shipped, and what it changed - with a link
 // to every deliverable. Runs as the deployer, so viewers need only the link. The sheet's `log` tab is the source (one row per
 // piece of work); Claude Code adds rows through Inbox.gs (see skill/SKILL.md). All numbers are worked out in Model.html.
-var TABS = { log: 'log', ideas: 'ideas', streams: 'streams', config: 'config', applied: 'inbox-applied' };
+var TABS = { log: 'log', ideas: 'ideas', streams: 'streams', config: 'config', applied: 'inbox-applied', notes: 'notes' };
+var NOTE_HEAD = ['id', 'created', 'updated', 'text', 'state', 'task'];
+var NOTE_STATES = ['Open', 'Made a task', 'Archived'];
 var LOG_HEAD = ['date', 'item', 'project', 'stream', 'kind', 'status', 'notes', 'impact', 'link', 'for'];
 var IDEA_HEAD = ['stream', 'idea', 'status'];
 var STREAM_HEAD = ['stream', 'about'];
@@ -36,6 +38,7 @@ function getData() {
     ideas: rowsOf(book, TABS.ideas, IDEA_HEAD).filter(function (r) { return r[1]; }),
     streams: rowsOf(book, TABS.streams, STREAM_HEAD).filter(function (r) { return r[0]; }),
     canEdit: edit,
+    notes: edit ? readNotes(book, tz) : [],  // a scratchpad: editors only - never sent to a viewer
     sheet: edit ? book.getUrl() : null,  // viewers get the app, not the sheet
     warnings: warnings
   });
@@ -124,6 +127,7 @@ function addTask(json) {
     var log = book.getSheetByName(TABS.log);
     var head = log.getRange(1, 1, 1, log.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
     log.getRange(log.getLastRow() + 1, 1, 1, head.length).setValues([head.map(function (h) { return h in rec ? rec[h] : ''; })]);
+    if (t.fromNote) setNote(book, String(t.fromNote), { state: 'Made a task', task: item });  // the note it came from, in the same save
     SpreadsheetApp.flush();
   } finally { lock.releaseLock(); }
   return getData();
@@ -131,6 +135,84 @@ function addTask(json) {
 
 /** Typed text stays text: Sheets reads a leading = + - @ as a formula, so such a value gets the ' that keeps it text. */
 function plain(s) { return /^[=+\-@]/.test(s) ? "'" + s : s; }
+
+// ---------------------------------------------------------------- notes ----------
+// A scratchpad in the notes tab: jot things down, turn one into a task when it becomes work. Editors only, both ways -
+// getData sends notes to editors alone, and every change is checked here.
+
+/** notes as [id, created, updated, text, state, task], newest first. */
+function readNotes(book, tz) {
+  var stamp = function (v) { return v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd HH:mm') : String(v); };
+  return rowsOf(book, TABS.notes, NOTE_HEAD).map(function (r, i) {
+    return [String(r[0]), stamp(r[1]), stamp(r[2]), String(r[3]), NOTE_STATES.indexOf(String(r[4])) >= 0 ? String(r[4]) : 'Open', String(r[5]), i];
+  }).filter(function (r) { return r[0] && r[3]; })
+    .sort(function (a, b) { return a[1] < b[1] ? 1 : a[1] > b[1] ? -1 : b[6] - a[6]; })  // same minute: the later row first
+    .map(function (r) { return r.slice(0, 6); });
+}
+
+/** The page's notepad: a new note ({text}), or an edit ({id, text}). Returns the fresh payload. */
+function saveNote(json) {
+  var book = SpreadsheetApp.getActiveSpreadsheet();
+  if (!canEdit(book)) throw new Error('Only editors of the sheet can keep notes.');
+  var t = JSON.parse(json || '{}'), text = plain(String(t.text == null ? '' : t.text).trim().slice(0, 5000));
+  if (!text) throw new Error('The note is empty.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var sheet = notesTab(book), now = nowStamp();
+    if (t.id) {
+      if (!setNote(book, String(t.id), { text: text })) throw new Error('That note is no longer in the sheet.');
+    } else {
+      var id = 'n' + (CLOCK || new Date()).getTime().toString(36) + '-' + (sheet.getLastRow() + 1);
+      sheet.getRange(sheet.getLastRow() + 1, 1, 1, NOTE_HEAD.length).setValues([[id, now, now, text, 'Open', '']]);
+    }
+    SpreadsheetApp.flush();
+  } finally { lock.releaseLock(); }
+  return getData();
+}
+
+/** Archive a note, or bring it back ({id, state}). Returns the fresh payload. */
+function noteState(json) {
+  var book = SpreadsheetApp.getActiveSpreadsheet();
+  if (!canEdit(book)) throw new Error('Only editors of the sheet can keep notes.');
+  var t = JSON.parse(json || '{}');
+  if (NOTE_STATES.indexOf(t.state) < 0) throw new Error('A note is ' + NOTE_STATES.join(', ') + '.');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    if (!setNote(book, String(t.id || ''), { state: t.state })) throw new Error('That note is no longer in the sheet.');
+    SpreadsheetApp.flush();
+  } finally { lock.releaseLock(); }
+  return getData();
+}
+
+/** Change a note's fields by id (the caller holds the lock); false when the id is not there. */
+function setNote(book, id, change) {
+  var sheet = book.getSheetByName(TABS.notes);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  var head = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
+  var ids = sheet.getRange(2, head.indexOf('id') + 1, sheet.getLastRow() - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === id) {
+    change.updated = nowStamp();
+    Object.keys(change).forEach(function (k) { if (head.indexOf(k) >= 0) sheet.getRange(i + 2, head.indexOf(k) + 1).setValue(change[k]); });
+    return true;
+  }
+  return false;
+}
+
+function notesTab(book) {
+  var sheet = book.getSheetByName(TABS.notes);
+  if (sheet) return sheet;
+  sheet = book.insertSheet(TABS.notes);
+  sheet.getRange(1, 1, 1, NOTE_HEAD.length).setValues([NOTE_HEAD]);
+  sheet.getRange(1, 1, 1, NOTE_HEAD.length).setFontWeight('bold').setBackground('#eef5fd');
+  sheet.setFrozenRows(1);
+  [120, 130, 130, 520, 110, 260].forEach(function (w, i) { sheet.setColumnWidth(i + 1, w); });
+  sheet.getRange('D2:D').setWrap(true);
+  return sheet;
+}
+
+function nowStamp() { return Utilities.formatDate(CLOCK || new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'); }
 
 // ---------------------------------------------------------------- first open ----------
 

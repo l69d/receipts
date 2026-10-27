@@ -76,6 +76,15 @@ Only the sheet's editors see the button, and the server checks again on every sa
 
 ![New task](docs/screenshots/new-task.png)
 
+## Notes
+
+A notepad for the sheet's editors: jot things down as they come up (⌘ / Ctrl + Enter saves), edit, archive. When a note
+turns into work, **Make a task** opens the task form with the note's first line as the task and the rest as its notes -
+saving adds the task and marks the note with the task it became. Notes live in the sheet's `notes` tab; viewers are
+never sent them.
+
+![Notes](docs/screenshots/notes.png)
+
 ## Logging by hand
 
 Or add a row to the `log` tab yourself. Dates as `2026-10-22` (or day first, `22/10/2026`); status `Completed`, `In Progress`,

@@ -1,8 +1,8 @@
 <script>
 // Receipts' page. Model works out every number; this file only draws them and wires the controls.
-var TABS = ['overview', 'now', 'timeline', 'impact', 'outputs', 'streams', 'ideas'];
+var TABS = ['overview', 'now', 'timeline', 'impact', 'outputs', 'streams', 'ideas', 'notes'];
 var RECENT = 8;  // the overview lists this many recent shipments; the rest are a click away
-var M = null, P = null, STATE = { tab: 'overview', stream: '', status: '', q: '' };
+var M = null, P = null, STATE = { tab: 'overview', stream: '', status: '', q: '', noteFilter: 'Open', editing: null, fromNote: null };
 
 function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -38,6 +38,8 @@ function start(payload) {
   $('sheet').hidden = !P.sheet; if (P.sheet) $('sheet').href = P.sheet;
   // the task form: editors only; its lists come from the log as it is now
   $('add-btn').hidden = !P.canEdit;
+  $('tab-notes').hidden = !P.canEdit;  // the notepad is the editors' own; viewers are never sent notes
+  if (!P.canEdit && STATE.tab === 'notes') STATE.tab = 'overview';
   var opts = function (list, blank) { return (blank ? '<option value="">' + blank + '</option>' : '') + list.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join(''); };
   $('f-stream').innerHTML = opts(M.streams.map(function (s) { return s.name; }), '(none)');
   $('f-kind').innerHTML = opts(Model.KINDS, '(none)');
@@ -51,13 +53,14 @@ function start(payload) {
 }
 
 // ---------------------------------------------------------------- new task / log update ----------
-/** Open the form - empty for a new task, or filled from an open project for an update. */
+/** Open the form - empty for a new task, filled from an open project for an update, or from a note (pre.fromNote). */
 function openAdd(pre) {
   pre = pre || {};
-  $('add-title').textContent = pre.project ? 'Update: ' + pre.project : 'New task';
-  $('f-item').value = ''; $('f-project').value = pre.project || ''; $('f-stream').value = pre.stream || ''; $('f-kind').value = pre.kind || '';
+  STATE.fromNote = pre.fromNote || null;
+  $('add-title').textContent = pre.fromNote ? 'Task from a note' : pre.project ? 'Update: ' + pre.project : 'New task';
+  $('f-item').value = pre.item || ''; $('f-project').value = pre.project || ''; $('f-stream').value = pre.stream || ''; $('f-kind').value = pre.kind || '';
   $('f-status').value = pre.status || 'Not yet Started'; $('f-date').value = M.asOf; $('f-for').value = pre.who || '';
-  $('f-notes').value = ''; $('f-link').value = ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
+  $('f-notes').value = pre.notes || ''; $('f-link').value = ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
   var d = $('add-dlg');
   if (d.showModal) d.showModal(); else d.setAttribute('open', '');
   $('f-item').focus();
@@ -68,7 +71,8 @@ function closeAdd() { var d = $('add-dlg'); if (d.close) d.close(); else d.remov
 function saveTask(e) {
   e.preventDefault();
   var task = { item: $('f-item').value.trim(), project: $('f-project').value.trim(), stream: $('f-stream').value, kind: $('f-kind').value,
-    status: $('f-status').value, date: $('f-date').value, 'for': $('f-for').value.trim(), notes: $('f-notes').value.trim(), link: $('f-link').value.trim() };
+    status: $('f-status').value, date: $('f-date').value, 'for': $('f-for').value.trim(), notes: $('f-notes').value.trim(), link: $('f-link').value.trim(),
+    fromNote: STATE.fromNote };
   if (!task.item) { $('f-msg').innerHTML = '<span class="err">Give it a name.</span>'; $('f-item').focus(); return; }
   $('f-save').disabled = true; $('f-msg').textContent = 'Saving…';
   google.script.run.withSuccessHandler(function (s) {
@@ -96,6 +100,12 @@ function setup() {
     var t = M.threads.filter(function (x) { return x.name === b.dataset.update; })[0];
     openAdd({ project: t.name, stream: t.stream, kind: t.latest.kind, status: t.status, who: t.latest.who });
   });
+  // the notepad
+  $('n-save').addEventListener('click', addNote);
+  $('n-text').addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); addNote(); } });
+  $('n-text').addEventListener('input', function () { draft(this.value); });
+  $('n-filter').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { STATE.noteFilter = b.dataset.f; STATE.editing = null; renderNotes(); } });
+  $('n-list').addEventListener('click', noteAction);
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { STATE.tab = b.dataset.tab; render(); } });
   $('status').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { STATE.status = b.dataset.s; render(); } });
   $('stream').addEventListener('change', function () { STATE.stream = this.value; render(); });
@@ -124,7 +134,7 @@ function render() {
   $('g-stream').hidden = ['timeline', 'impact', 'outputs'].indexOf(STATE.tab) < 0;
   $('g-status').hidden = $('g-q').hidden = STATE.tab !== 'timeline';
   $('ctl').hidden = $('g-stream').hidden && $('g-status').hidden;
-  ({ overview: renderOverview, now: renderNow, timeline: renderTimeline, impact: renderImpact, outputs: renderOutputs, streams: renderStreams, ideas: renderIdeas })[STATE.tab]();
+  ({ overview: renderOverview, now: renderNow, timeline: renderTimeline, impact: renderImpact, outputs: renderOutputs, streams: renderStreams, ideas: renderIdeas, notes: renderNotes })[STATE.tab]();
 }
 
 // ---------------------------------------------------------------- overview ----------
@@ -227,6 +237,71 @@ function renderStreams() {
       spark + '<div class="ths">' + s.threads.slice(0, 5).map(function (t) { return badge(t.status) + ' ' + esc(t.name); }).join('<br>') + (s.threads.length > 5 ? '<br>+ ' + (s.threads.length - 5) + ' more' : '') + '</div>' +
       (s.impacts.length ? '<ul>' + s.impacts.map(function (e) { return '<li>' + esc(e.impact) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
   }).join('');
+}
+
+// ---------------------------------------------------------------- notes ----------
+var NOTE_FILTERS = ['Open', 'Made a task', 'Archived', 'All'];
+
+function renderNotes() {
+  var N = Model.notes(P.notes, STATE.noteFilter);
+  if (!$('n-text').value) $('n-text').value = draft();
+  $('n-filter').innerHTML = NOTE_FILTERS.map(function (f) {
+    return '<button data-f="' + f + '" aria-pressed="' + (f === STATE.noteFilter) + '">' + esc(f) + ' · ' + (N.counts[f] || 0) + '</button>';
+  }).join('');
+  $('n-list').innerHTML = N.list.length ? N.list.map(function (n) {
+    var editing = STATE.editing === n.id;
+    return '<div class="card note-card st-' + n.state.replace(/ /g, '-') + '" data-id="' + esc(n.id) + '">' +
+      (editing ? '<textarea maxlength="5000" class="n-edit">' + esc(n.text) + '</textarea><div class="crow"><button class="btn" type="button" data-act="save-edit">Save</button>' +
+        '<button class="btn ghost" type="button" data-act="cancel-edit">Cancel</button></div>'
+        : '<div class="txt">' + esc(n.text) + '</div>') +
+      (n.state === 'Made a task' && n.task ? '<div class="tasked">Made a task: ' + esc(n.task) + '</div>' : '') +
+      '<div class="when">' + esc(n.created) + (n.updated && n.updated !== n.created ? ' · edited ' + esc(n.updated) : '') + '</div>' +
+      (editing ? '' : '<div class="acts">' +
+        (n.state !== 'Made a task' ? '<button type="button" class="linkbtn" data-act="task">Make a task</button>' : '') +
+        '<button type="button" class="linkbtn" data-act="edit">Edit</button>' +
+        (n.state === 'Archived' ? '<button type="button" class="linkbtn" data-act="reopen">Reopen</button>' : '<button type="button" class="linkbtn" data-act="archive">Archive</button>') +
+        '</div>') + '</div>';
+  }).join('') : '<p class="empty">' + (STATE.noteFilter === 'Open' ? 'No open notes - jot one down above.' : 'Nothing here.') + '</p>';
+}
+
+/** A server call that redraws with the payload it returns; fail(message) on an error. */
+function call(fn, arg, done, fail) {
+  google.script.run.withSuccessHandler(function (s) { start(JSON.parse(s)); if (done) done(); })
+    .withFailureHandler(function (e) { if (fail) fail(e.message || String(e)); else toast(e.message || String(e)); })[fn](JSON.stringify(arg));
+}
+
+function addNote() {
+  var text = $('n-text').value.trim();
+  if (!text) { $('n-msg').innerHTML = '<span class="err">Write something first.</span>'; return; }
+  $('n-save').disabled = true; $('n-msg').textContent = 'Saving…';
+  call('saveNote', { text: text }, function () {
+    $('n-text').value = ''; draft(''); $('n-msg').textContent = ''; $('n-save').disabled = false; STATE.noteFilter = 'Open'; renderNotes(); toast('Note saved');
+  }, function (m) { $('n-msg').innerHTML = '<span class="err">' + esc(m) + '</span>'; $('n-save').disabled = false; });
+}
+
+function noteAction(e) {
+  var b = e.target.closest('[data-act]'), card = e.target.closest('[data-id]');
+  if (!b || !card) return;
+  var id = card.dataset.id, n = Model.notes(P.notes, 'All').list.filter(function (x) { return x.id === id; })[0], act = b.dataset.act;
+  if (act === 'task') return openAdd({ fromNote: id, item: n.title, notes: n.rest });
+  if (act === 'edit') { STATE.editing = id; renderNotes(); $('n-list').querySelector('textarea').focus(); return; }
+  if (act === 'cancel-edit') { STATE.editing = null; renderNotes(); return; }
+  if (act === 'save-edit') {
+    var text = card.querySelector('textarea').value.trim();
+    if (!text) return toast('A note cannot be empty - archive it instead.');
+    b.disabled = true;
+    return call('saveNote', { id: id, text: text }, function () { STATE.editing = null; renderNotes(); toast('Note updated'); });
+  }
+  b.disabled = true;
+  call('noteState', { id: id, state: act === 'archive' ? 'Archived' : 'Open' }, function () { toast(act === 'archive' ? 'Archived' : 'Reopened'); });
+}
+
+/** The unsaved note survives a reload - in this browser only (a convenience; it may be unavailable). */
+function draft(v) {
+  try {
+    if (v === undefined) return localStorage.getItem('receipts-note-draft') || '';
+    if (v) localStorage.setItem('receipts-note-draft', v); else localStorage.removeItem('receipts-note-draft');
+  } catch (e) { return ''; }
 }
 
 // ---------------------------------------------------------------- ideas ----------

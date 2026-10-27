@@ -187,6 +187,21 @@ var Model = (function () {
       byType: Object.keys(byType).map(function (k) { return { type: k, n: byType[k] }; }).sort(function (a, b) { return b.n - a.n || (a.type < b.type ? -1 : 1); }) };
   }
 
+  /**
+   * The notepad: notes ([id, created, updated, text, state, task], newest first as the server sends them) under one filter
+   * - 'Open' (default), 'Made a task', 'Archived' or 'All' - with how many each filter holds.
+   */
+  function notes(list, filter) {
+    var all = (list || []).map(function (r) {
+      var lines = String(r[3]).split('\n'), first = lines[0].trim();
+      return { id: r[0], created: r[1], updated: r[2], text: r[3], state: r[4] || 'Open', task: r[5] || '',
+        title: first.slice(0, 300), rest: [first.slice(300), lines.slice(1).join('\n').trim()].filter(Boolean).join('\n') };
+    });
+    var f = filter || 'Open', counts = { Open: 0, 'Made a task': 0, Archived: 0, All: all.length };
+    all.forEach(function (n) { counts[n.state] = (counts[n.state] || 0) + 1; });
+    return { list: f === 'All' ? all : all.filter(function (n) { return n.state === f; }), counts: counts };
+  }
+
   /** Ideas grouped by stream, open first. */
   function ideas(M) {
     var rank = function (s) { return s === 'Open' || !s ? 0 : s === 'Picked up' ? 1 : 2; };
@@ -195,7 +210,7 @@ var Model = (function () {
   }
 
   return { STATUSES: STATUSES, KINDS: KINDS, addDays: addDays, days: days, monday: monday, isoWeek: isoWeek, dm: dm, weekLabel: weekLabel, isOpen: isOpen,
-    links: links, load: load, overview: overview, now: now, timeline: timeline, impact: impact, outputs: outputs, streams: streams, ideas: ideas };
+    links: links, load: load, overview: overview, now: now, timeline: timeline, impact: impact, outputs: outputs, streams: streams, ideas: ideas, notes: notes };
 })();
 if (typeof module !== 'undefined') module.exports = Model;
 </script>
