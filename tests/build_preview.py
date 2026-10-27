@@ -150,11 +150,11 @@ var SERVER = (function () {
   var Utilities = { formatDate: fakeFormatDate };
 %s
   CLOCK = new Date(%d, %d, %d, 18, 0);
-  return { getData: getData };
+  return { getData: getData, addTask: addTask };
 })();
 var google = { script: { run: (function runner(ok, fail) {
   var r = { withSuccessHandler: function (f) { return runner(f, fail); }, withFailureHandler: function (f) { return runner(ok, f); } };
-  ['getData'].forEach(function (n) {
+  ['getData', 'addTask'].forEach(function (n) {
     r[n] = function () { var a = arguments; setTimeout(function () { try { var v = SERVER[n].apply(null, a); if (ok) ok(v); } catch (e) { if (fail) fail(e); } }, 30); };
   });
   return r;

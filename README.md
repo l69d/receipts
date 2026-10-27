@@ -66,9 +66,19 @@ You need: a Google account, Node 18+, Python 3 with pandas (for the tests), and 
 To use the skill from any folder, link it into your user skills:
 `ln -s "$PWD/.claude/skills/receipts" ~/.claude/skills/receipts`.
 
+## Logging tasks from the page
+
+When someone hands you work, press **+ New task** - what, project (your existing ones are suggested), stream, kind,
+status, date, who asked, notes, links - and it's in the sheet. On the **Now** tab every open piece of work has
+**Log update**: the same form, filled in for that project, to record progress or mark it done.
+
+Only the sheet's editors see the button, and the server checks again on every save.
+
+![New task](docs/screenshots/new-task.png)
+
 ## Logging by hand
 
-Add a row to the `log` tab. Dates as `2026-10-22` (or day first, `22/10/2026`); status `Completed`, `In Progress`,
+Or add a row to the `log` tab yourself. Dates as `2026-10-22` (or day first, `22/10/2026`); status `Completed`, `In Progress`,
 `Not yet Started` or `Deprioritized` (`done` and `wip` work too). Entries with the same **project** form a thread, and a
 thread's status is its latest entry's - that is what the Now tab shows.
 

@@ -105,6 +105,25 @@
   .out .imp{font-size:13px; margin-top:6px; padding-left:10px; border-left:3px solid var(--good);}
   .out .links{flex-direction:column; align-items:flex-start;}
 
+  /* + New task / Log update: a native dialog (focus, Esc and the backdrop come with it) */
+  .btn{font:inherit; font-size:13px; font-weight:600; border:0; border-radius:8px; padding:6px 12px; background:var(--ink-1); color:#fff; cursor:pointer;}
+  .btn:disabled{opacity:.45; cursor:default;}
+  .btn.ghost{background:none; color:var(--ink-2); border:1px solid var(--border);}
+  .linkbtn{font:inherit; font-size:12.5px; background:none; border:0; padding:0; color:var(--blue); cursor:pointer;}
+  dialog{border:1px solid var(--border); border-radius:14px; padding:0; width:min(560px, calc(100vw - 24px)); background:var(--surface); color:var(--ink-1);
+         box-shadow:0 18px 50px rgba(11,11,11,.18);}
+  dialog::backdrop{background:rgba(11,11,11,.28);}
+  dialog form{padding:18px 20px 16px; display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;}
+  dialog h3{grid-column:1 / -1; margin:0; font-size:16px;}
+  dialog label{display:flex; flex-direction:column; gap:4px; font-size:12px; font-weight:600; color:var(--ink-2); min-width:0;}
+  dialog label.full{grid-column:1 / -1;}
+  dialog input, dialog select, dialog textarea{font:inherit; font-size:14px; font-weight:400; color:var(--ink-1); background:#fff; border:1px solid var(--border);
+         border-radius:8px; padding:6px 9px; width:100%;}
+  dialog textarea{min-height:64px; resize:vertical;}
+  dialog .row{grid-column:1 / -1; display:flex; justify-content:flex-end; align-items:center; gap:10px;}
+  dialog .msg{margin-right:auto; font-size:13px;}
+  .toast{position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:var(--ink-1); color:#fff; padding:8px 14px; border-radius:10px; font-size:13.5px; z-index:3000;}
+
   /* a thread (Now) */
   .thread{border-left:3px solid var(--pc, var(--border));}
   .thread .name{font-weight:650; font-size:14.5px;}
@@ -143,7 +162,7 @@
 <header class="top">
   <div class="top-row">
     <div class="brand">Receipts <span id="who"></span></div>
-    <div class="actions"><span class="asof" id="meta">Loading…</span><a id="sheet" href="#" target="_blank" rel="noopener" hidden>Open the sheet</a></div>
+    <div class="actions"><button class="btn" id="add-btn" type="button" hidden>+ New task</button><span class="asof" id="meta">Loading…</span><a id="sheet" href="#" target="_blank" rel="noopener" hidden>Open the sheet</a></div>
   </div>
   <div class="filters">
     <div class="seg" id="tabs">
@@ -220,6 +239,22 @@
 
   <p class="note">Source: the sheet's log tab, one row per piece of work - typed in the sheet or added by Claude Code. Weeks run Monday to Sunday. A project's status is its latest entry's.</p>
 </main>
+<dialog id="add-dlg" aria-labelledby="add-title">
+  <form id="add-form" method="dialog" autocomplete="off">
+    <h3 id="add-title">New task</h3>
+    <label class="full">What<input id="f-item" required maxlength="300" placeholder="e.g. Churn drivers analysis"></label>
+    <label>Project<input id="f-project" list="f-projects" maxlength="300" placeholder="groups it with earlier work"><datalist id="f-projects"></datalist></label>
+    <label>Stream<select id="f-stream"></select></label>
+    <label>Kind<select id="f-kind"></select></label>
+    <label>Status<select id="f-status"></select></label>
+    <label>Date<input id="f-date" type="date" required></label>
+    <label>For<input id="f-for" maxlength="300" placeholder="who asked"></label>
+    <label class="full">Notes<textarea id="f-notes" maxlength="2000" placeholder="what it is, what done looks like"></textarea></label>
+    <label class="full">Links<textarea id="f-link" maxlength="2000" placeholder="Label | https://... (one a line)"></textarea></label>
+    <div class="row"><span class="msg" id="f-msg"></span><button class="btn ghost" type="button" id="f-cancel">Cancel</button><button class="btn" type="submit" id="f-save">Save</button></div>
+  </form>
+</dialog>
+<div class="toast" id="toast" hidden></div>
 <div style="position:fixed;right:10px;bottom:10px;z-index:3000;background:#fff3cd;border:1px solid #e0b100;border-radius:8px;padding:4px 10px;font:12px system-ui">Demo · fictional data, placeholder links · today = 2026-10-23</div><script>
 var __GRIDS__ = {"log": [["date", "item", "project", "stream", "kind", "status", "notes", "impact", "link", "for"], [{"$d": "2026-08-04"}, "Discount elasticity by category", "Discount elasticity", "Pricing", "Analysis", "Completed", "Regression of orders on discount depth for the top 40 categories, 6 months of data", "Cut blanket discounts on 9 categories where demand did not move", "Elasticity workbook | https://docs.google.com/spreadsheets/d/1DEMOelasticity00000000000000000000000001/edit", "Pricing team"], [{"$d": "2026-08-06"}, "Onboarding funnel rebuild", "Onboarding funnel", "Growth", "Dashboard", "Completed", "Rebuilt the signup-to-first-order funnel on the new events table", "Funnel numbers now match finance within 0.5%", "Funnel dashboard | https://lookerstudio.google.com/reporting/00000000-demo-4000-8000-000000000101", ""], [{"$d": "2026-08-11"}, "Weekly KPI pipeline", "KPI pipeline", "Platform", "Pipeline", "Completed", "Scheduled the 14 weekly KPIs as one job instead of 14 hand-run queries", "Saves the team about 3 hours every Monday", "kpi-pipeline repo | https://github.com/acme-demo/kpi-pipeline", ""], [{"$d": "2026-08-13"}, "Late-delivery RCA", "Delivery speed", "Ops", "Analysis", "Completed", "Why 7% of orders in the north region arrived late in July", "Two stores' picker shortages explained 60% of late orders; staffing moved", "Late-delivery RCA | https://docs.google.com/spreadsheets/d/1DEMOlatedelivery000000000000000000000002/edit", "Ops leads"], [{"$d": "2026-08-19"}, "Coupon abuse check", "Discount elasticity", "Pricing", "Analysis", "Completed", "Accounts redeeming more than 5 first-order coupons", "Blocked 1,240 accounts; coupon cost down 4%", "", "Risk team"], [{"$d": "2026-08-21"}, "Retention cohorts v1", "Retention cohorts", "Growth", "Dashboard", "Completed", "Monthly cohorts by acquisition channel", "", "Cohort dashboard | https://lookerstudio.google.com/reporting/00000000-demo-4000-8000-000000000102", ""], [{"$d": "2026-08-27"}, "Metrics glossary draft", "Metrics glossary", "Platform", "Doc", "Completed", "Definitions of the 40 metrics on team dashboards", "", "Glossary | https://docs.google.com/document/d/1DEMOglossary0000000000000000000000000003/edit", ""], [{"$d": "2026-09-01"}, "Festive sale readiness", "Festive sale", "Ops", "Analysis", "Completed", "Store capacity vs forecast demand for the sale week", "Flagged 12 stores to double picker shifts before the sale", "Readiness sheet | https://docs.google.com/spreadsheets/d/1DEMOfestive0000000000000000000000000004/edit", "Ops leads"], [{"$d": "2026-09-03"}, "Price-match tracker", "Price matching", "Pricing", "Dashboard", "Completed", "Daily price gaps vs two competitors on 5,000 SKUs", "", "Price-match tracker | https://docs.google.com/spreadsheets/d/1DEMOpricematch000000000000000000000005/edit", ""], [{"$d": "2026-09-08"}, "Festive sale war room", "Festive sale", "Ops", "Dashboard", "Completed", "Hourly orders, stock-outs and delivery time for the sale", "Caught a stock-out on day 1 within the hour", "War room | https://script.google.com/macros/s/AKfycbDEMOwarroom0000000000000000001/exec", ""], [{"$d": "2026-09-10"}, "Referral program sizing", "Referrals", "Growth", "Analysis", "Completed", "What a referral program would bring, from 3 comparable markets", "Approved as a Q4 pilot", "Sizing deck | https://docs.google.com/presentation/d/1DEMOreferral0000000000000000000000000006/edit", "Growth lead"], [{"$d": "2026-09-15"}, "Festive sale RCA", "Festive sale", "Ops", "Analysis", "Completed", "Day-by-day: what went right and wrong in the sale", "Three fixes adopted for the next sale", "Sale RCA | https://docs.google.com/spreadsheets/d/1DEMOsalerca00000000000000000000000000007/edit", "Leadership"], [{"$d": "2026-09-17"}, "Dashboard load times", "KPI pipeline", "Platform", "Fix", "Completed", "Pre-aggregated the 3 slowest dashboard queries", "Main dashboard loads in 4s instead of 40s", "", ""], [{"$d": "2026-09-22"}, "Retention cohorts v2", "Retention cohorts", "Growth", "Dashboard", "Completed", "Added week-1 and week-4 retention by city", "", "", ""], [{"$d": "2026-09-24"}, "Competitor price study", "Price matching", "Pricing", "Deck", "Completed", "Where we are priced above both competitors, by category", "Repriced 300 SKUs; price index from 104 to 101", "Price study deck | https://docs.google.com/presentation/d/1DEMOpricestudy000000000000000000000008/edit", "Category heads"], [{"$d": "2026-09-29"}, "Store capacity model", "Delivery speed", "Ops", "Analysis", "Completed", "Orders a store can take per hour, by size and staffing", "", "Capacity model | https://docs.google.com/spreadsheets/d/1DEMOcapacity00000000000000000000000009/edit", ""], [{"$d": "2026-10-01"}, "Q4 planning numbers", "Q4 planning", "Growth", "Deck", "Completed", "Baseline and stretch targets for orders and users", "Targets agreed in the Q4 review", "Q4 plan | https://docs.google.com/spreadsheets/d/1DEMOq4plan000000000000000000000000000010/edit", "Leadership"], [{"$d": "2026-10-02"}, "Referral pilot dashboard", "Referrals", "Growth", "Dashboard", "In Progress", "Invites, sign-ups and first orders from referrals, daily", "", "", ""], [{"$d": "2026-10-06"}, "Metrics glossary v1", "Metrics glossary", "Platform", "Doc", "Completed", "Reviewed with the 4 dashboard owners; linked from every dashboard", "Two conflicting 'active user' definitions merged into one", "", ""], [{"$d": "2026-10-07"}, "Discount elasticity refresh", "Discount elasticity", "Pricing", "Analysis", "Completed", "Re-ran on Q3 data with the new categories", "", "", ""], [{"$d": "2026-10-08"}, "Late-delivery alerts", "Delivery speed", "Ops", "Pipeline", "In Progress", "Daily check that flags stores whose delivery time drifts", "", "", ""], [{"$d": "2026-10-09"}, "Review: pricing team's A/B readout", "Price matching", "Pricing", "Review", "Completed", "Checked the test design and the significance calculation", "Found a sample-ratio mismatch; test re-run", "", "Pricing team"], [{"$d": "2026-10-12"}, "Churn drivers", "Retention cohorts", "Growth", "Analysis", "Completed", "What users who left in Q3 had in common", "Slow first delivery doubles 30-day churn - shared with Ops", "Churn analysis | https://docs.google.com/spreadsheets/d/1DEMOchurn0000000000000000000000000000011/edit", ""], [{"$d": "2026-10-13"}, "City expansion shortlist", "City expansion", "Growth", "Analysis", "Not yet Started", "Rank 20 candidate cities on demand and competition", "", "", "Strategy team"], [{"$d": "2026-10-14"}, "Price-match automation", "Price matching", "Pricing", "Pipeline", "Completed", "Competitor prices now load nightly instead of by hand", "", "", ""], [{"$d": "2026-10-15"}, "Weekly business review deck", "Weekly review", "Platform", "Deck", "Completed", "Template that fills itself from the KPI pipeline", "WBR prep from half a day to 20 minutes", "WBR deck | https://docs.google.com/presentation/d/1DEMOwbr000000000000000000000000000000012/edit", "Leadership"], [{"$d": "2026-10-16"}, "Bundle pricing test", "Bundles", "Pricing", "Analysis", "Deprioritized", "Paused until the price-match work settles", "", "", ""], [{"$d": "2026-10-19"}, "Referral pilot dashboard", "Referrals", "Growth", "Dashboard", "In Progress", "Live for 2 cities; adding the cost per acquired user", "", "Referral dashboard | https://lookerstudio.google.com/reporting/00000000-demo-4000-8000-000000000103", ""], [{"$d": "2026-10-20"}, "Store capacity model v2", "Delivery speed", "Ops", "Analysis", "Completed", "Added weekend patterns and new stores", "Used to staff 6 new stores", "", "Ops leads"], [{"$d": "2026-10-21"}, "KPI pipeline tests", "KPI pipeline", "Platform", "Fix", "Completed", "Checks that each KPI matches its source within 0.1%", "", "", ""], [{"$d": "2026-10-22"}, "Late-delivery alerts", "Delivery speed", "Ops", "Pipeline", "In Progress", "Alert live for 1 region; tuning the threshold", "", "", ""], [{"$d": "2026-10-22"}, "Churn follow-up with Ops", "Retention cohorts", "Growth", "Review", "Completed", "Walked Ops through the first-delivery finding", "", "", "Ops leads"], [{"$d": "2026-10-23"}, "Discount guardrails", "Discount elasticity", "Pricing", "Feature", "In Progress", "A floor on discount depth per category, from the elasticity model", "", "", "Pricing team"]], "ideas": [["stream", "idea", "status"], ["Pricing", "Elasticity by city tier, not just by category", "Open"], ["Growth", "Weekly cohort email to every team lead", "Open"], ["Platform", "One metrics glossary the dashboards all link to", "Picked up"], ["Ops", "Alert when a store's delivery time drifts 10% over a week", "Open"]], "streams": [["stream", "about"], ["Pricing", "Prices, discounts and what they do to demand"], ["Growth", "New users, retention and the funnels in between"], ["Platform", "The dashboards, pipelines and tools the team runs on"], ["Ops", "Supply, delivery speed and the incidents behind them"]], "config": [["key", "value"], ["name", "Alex Rivera"], ["title", "Senior Data Analyst"], ["org", "Growth Analytics, Acme"], ["tagline", "What I am working on, what shipped, and what it changed - with a link to every deliverable."]]};
 // SpreadsheetApp / Session / LockService over plain grids ({tab: [[cell, ...], ...]}) - what Code.gs calls.
@@ -421,6 +456,39 @@ function canEdit(book) {
   return !!me && book.getEditors().some(function (u) { return String(u.getEmail()).toLowerCase() === me; });
 }
 
+/**
+ * The page's "+ New task" / "Log update" form: one row into the log tab, under its own headers. Editors only (the app
+ * writes as the deployer, so the link alone must not be enough); every field checked here, whatever the page sent.
+ * Returns the fresh payload, so the page redraws with the new row.
+ */
+function addTask(json) {
+  var book = SpreadsheetApp.getActiveSpreadsheet(), tz = Session.getScriptTimeZone();
+  if (!canEdit(book)) throw new Error('Only editors of the sheet can add tasks.');
+  var t = JSON.parse(json || '{}'), text = function (k, max) { return plain(String(t[k] == null ? '' : t[k]).trim().slice(0, max || 300)); };
+  var item = text('item');
+  if (!item) throw new Error('Give the task a name.');
+  var day = isoDay(String(t.date || '').trim() || Utilities.formatDate(CLOCK || new Date(), tz, 'yyyy-MM-dd'), tz);
+  if (!day) throw new Error('The date did not read as a date - use 2026-10-27.');
+  var status = statusOf(t.status || 'Not yet Started');
+  if (STATUSES.indexOf(status) < 0) throw new Error('Status must be one of ' + STATUSES.join(', ') + '.');
+  var p = day.split('-');
+  var rec = { date: new Date(+p[0], p[1] - 1, +p[2]), item: item, project: text('project'), stream: text('stream'), kind: text('kind'), status: status,
+    notes: text('notes', 2000), impact: text('impact', 500), link: text('link', 2000), 'for': text('for') };
+  setupIfNew(book);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var log = book.getSheetByName(TABS.log);
+    var head = log.getRange(1, 1, 1, log.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
+    log.getRange(log.getLastRow() + 1, 1, 1, head.length).setValues([head.map(function (h) { return h in rec ? rec[h] : ''; })]);
+    SpreadsheetApp.flush();
+  } finally { lock.releaseLock(); }
+  return getData();
+}
+
+/** Typed text stays text: Sheets reads a leading = + - @ as a formula, so such a value gets the ' that keeps it text. */
+function plain(s) { return /^[=+\-@]/.test(s) ? "'" + s : s; }
+
 // ---------------------------------------------------------------- first open ----------
 
 /**
@@ -548,11 +616,11 @@ var LINKS = [
 ];
 
   CLOCK = new Date(2026, 9, 23, 18, 0);
-  return { getData: getData };
+  return { getData: getData, addTask: addTask };
 })();
 var google = { script: { run: (function runner(ok, fail) {
   var r = { withSuccessHandler: function (f) { return runner(f, fail); }, withFailureHandler: function (f) { return runner(ok, f); } };
-  ['getData'].forEach(function (n) {
+  ['getData', 'addTask'].forEach(function (n) {
     r[n] = function () { var a = arguments; setTimeout(function () { try { var v = SERVER[n].apply(null, a); if (ok) ok(v); } catch (e) { if (fail) fail(e); } }, 30); };
   });
   return r;
@@ -798,6 +866,13 @@ function start(payload) {
   var last = M.entries.length ? M.entries[M.entries.length - 1].date : null;
   $('meta').textContent = M.entries.length ? plural(M.entries.length, 'entry', 'entries') + ' since ' + Model.dm(M.entries[0].date) + ' · last logged ' + Model.dm(last) : 'Nothing logged yet';
   $('sheet').hidden = !P.sheet; if (P.sheet) $('sheet').href = P.sheet;
+  // the task form: editors only; its lists come from the log as it is now
+  $('add-btn').hidden = !P.canEdit;
+  var opts = function (list, blank) { return (blank ? '<option value="">' + blank + '</option>' : '') + list.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join(''); };
+  $('f-stream').innerHTML = opts(M.streams.map(function (s) { return s.name; }), '(none)');
+  $('f-kind').innerHTML = opts(Model.KINDS, '(none)');
+  $('f-status').innerHTML = opts(Model.STATUSES);
+  $('f-projects').innerHTML = M.threads.map(function (t) { return '<option value="' + esc(t.name) + '">'; }).join('');
   var C = P.config || {}, role = [C.title, C.org].filter(Boolean).join(', ');
   $('who').textContent = [C.name, role].filter(Boolean).map(function (s) { return '· ' + s; }).join(' ');
   if (C.name) document.title = 'Receipts · ' + C.name;
@@ -805,7 +880,52 @@ function start(payload) {
   render();
 }
 
+// ---------------------------------------------------------------- new task / log update ----------
+/** Open the form - empty for a new task, or filled from an open project for an update. */
+function openAdd(pre) {
+  pre = pre || {};
+  $('add-title').textContent = pre.project ? 'Update: ' + pre.project : 'New task';
+  $('f-item').value = ''; $('f-project').value = pre.project || ''; $('f-stream').value = pre.stream || ''; $('f-kind').value = pre.kind || '';
+  $('f-status').value = pre.status || 'Not yet Started'; $('f-date').value = M.asOf; $('f-for').value = pre.who || '';
+  $('f-notes').value = ''; $('f-link').value = ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
+  var d = $('add-dlg');
+  if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+  $('f-item').focus();
+}
+
+function closeAdd() { var d = $('add-dlg'); if (d.close) d.close(); else d.removeAttribute('open'); }
+
+function saveTask(e) {
+  e.preventDefault();
+  var task = { item: $('f-item').value.trim(), project: $('f-project').value.trim(), stream: $('f-stream').value, kind: $('f-kind').value,
+    status: $('f-status').value, date: $('f-date').value, 'for': $('f-for').value.trim(), notes: $('f-notes').value.trim(), link: $('f-link').value.trim() };
+  if (!task.item) { $('f-msg').innerHTML = '<span class="err">Give it a name.</span>'; $('f-item').focus(); return; }
+  $('f-save').disabled = true; $('f-msg').textContent = 'Saving…';
+  google.script.run.withSuccessHandler(function (s) {
+    start(JSON.parse(s));
+    closeAdd();
+    toast('Saved: ' + task.item);
+  }).withFailureHandler(function (err) {
+    $('f-msg').innerHTML = '<span class="err">' + esc(err.message || err) + '</span>';
+    $('f-save').disabled = false;
+  }).addTask(JSON.stringify(task));
+}
+
+function toast(text) {
+  var t = $('toast'); t.textContent = text; t.hidden = false;
+  clearTimeout(toast.timer); toast.timer = setTimeout(function () { t.hidden = true; }, 3500);
+}
+
 function setup() {
+  $('add-btn').addEventListener('click', function () { openAdd(); });
+  $('f-cancel').addEventListener('click', closeAdd);
+  $('add-form').addEventListener('submit', saveTask);
+  $('now-open').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-update]');
+    if (!b) return;
+    var t = M.threads.filter(function (x) { return x.name === b.dataset.update; })[0];
+    openAdd({ project: t.name, stream: t.stream, kind: t.latest.kind, status: t.status, who: t.latest.who });
+  });
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { STATE.tab = b.dataset.tab; render(); } });
   $('status').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { STATE.status = b.dataset.s; render(); } });
   $('stream').addEventListener('change', function () { STATE.stream = this.value; render(); });
@@ -878,7 +998,8 @@ function renderNow() {
     return '<div class="card thread" style="--pc:' + M.color[t.stream] + '"><div class="name">' + esc(t.name) + '</div><div class="meta" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
       chip(t.stream) + badge(t.status) + '</div><div class="age">Started ' + Model.dm(t.first) + ' (' + ago(t.age) + ') · ' + plural(t.n, 'update') +
       (t.done ? ', ' + t.done + ' shipped along the way' : '') + ' · last <span class="' + (t.quiet >= 7 ? 'quiet' : '') + '">' + ago(t.quiet) + '</span></div>' +
-      '<div class="note">' + esc(t.note) + '</div></div>';
+      '<div class="note">' + esc(t.note) + '</div>' +
+      (P.canEdit ? '<div style="margin-top:8px"><button type="button" class="linkbtn" data-update="' + esc(t.name) + '">Log update</button></div>' : '') + '</div>';
   }).join('') : '<p class="empty">Nothing open.</p>';
   $('now-parked-sec').hidden = !N.parked.length;
   $('now-parked').innerHTML = N.parked.map(function (t) { return entry(t.latest); }).join('');

@@ -135,6 +135,41 @@ section("inbox: links for rows already in the log");
   eq(g.log[1][8], "", "a link cleared by hand is not filled again");
 }
 
+section("addTask: the page's + New task form");
+{
+  const s = loadServer(demoGrids());
+  const n0 = s.grids.log.length;
+  const P = JSON.parse(s.addTask(JSON.stringify({ item: "  City expansion model  ", project: "City expansion", stream: "Growth", kind: "Analysis", notes: "first cut", "for": "Strategy team" })));
+  const row = s.grids.log[n0];
+  eq(s.grids.log.length, n0 + 1, "one row added under the last row");
+  eq([row[1], row[2], row[3], row[4], row[5], row[6], row[9]], ["City expansion model", "City expansion", "Growth", "Analysis", "Not yet Started", "first cut", "Strategy team"],
+    "trimmed fields under their headers; status defaults to Not yet Started");
+  ok(row[0] instanceof s.Date && row[0].getDate() === +X.as_of.slice(8), "date defaults to today, as a date cell");
+  ok(P.entries.some((e) => e[1] === "City expansion model" && e[5] === "Not yet Started"), "the returned payload has it - the page redraws with it");
+  const at = (o) => { try { s.addTask(JSON.stringify(o)); return "saved"; } catch (e) { return e.message; } };
+  ok(/name/.test(at({ item: "   " })), "a blank name is refused");
+  ok(/date/.test(at({ item: "x", date: "31/02/2026" })), "a date that is not a day is refused");
+  ok(/Status must be/.test(at({ item: "x", status: "Blocked" })), "an unknown status is refused");
+  eq(at({ item: "x", status: "done", date: "2026-10-20" }), "saved", "statuses typed loosely still map (done -> Completed)");
+  eq(s.grids.log[s.grids.log.length - 1][5], "Completed", "... written as Completed");
+  at({ item: "=IMPORTXML(\"https://evil.example\")", notes: "+1 more", link: "@x" });
+  const f = s.grids.log[s.grids.log.length - 1];
+  eq([f[1], f[6], f[8]], ["'=IMPORTXML(\"https://evil.example\")", "'+1 more", "'@x"], "text starting = + - @ stays text, never a formula");
+  at({ item: "long", notes: "n".repeat(5000) });
+  eq(s.grids.log[s.grids.log.length - 1][6].length, 2000, "notes capped at 2,000 characters");
+  const before = s.grids.log.length;
+  const v = loadServer(s.grids, "someone.else@acme.example", [USER]);
+  let refused = "";
+  try { v.addTask(JSON.stringify({ item: "sneaky" })); } catch (e) { refused = e.message; }
+  ok(/Only editors/.test(refused) && s.grids.log.length === before, "a viewer cannot add (and nothing is written)");
+  const r = loadServer({ log: [["Status", "my col", "Item", "date"]] });
+  r.addTask(JSON.stringify({ item: "B", status: "In Progress" }));
+  eq([r.grids.log[1][0], r.grids.log[1][1], r.grids.log[1][2]], ["In Progress", "", "B"], "written under the log's own headers, whatever their order");
+  const n = loadServer();
+  n.addTask(JSON.stringify({ item: "First task" }));
+  ok(n.grids.log && n.grids.log[1][1] === "First task" && n.grids.config, "a brand-new sheet is set up first, then the task goes in");
+}
+
 section("only editors get the sheet");
 {
   const P = JSON.parse(loadServer(demoGrids(), "someone.else@acme.example", [USER]).getData());

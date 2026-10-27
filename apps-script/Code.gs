@@ -99,6 +99,39 @@ function canEdit(book) {
   return !!me && book.getEditors().some(function (u) { return String(u.getEmail()).toLowerCase() === me; });
 }
 
+/**
+ * The page's "+ New task" / "Log update" form: one row into the log tab, under its own headers. Editors only (the app
+ * writes as the deployer, so the link alone must not be enough); every field checked here, whatever the page sent.
+ * Returns the fresh payload, so the page redraws with the new row.
+ */
+function addTask(json) {
+  var book = SpreadsheetApp.getActiveSpreadsheet(), tz = Session.getScriptTimeZone();
+  if (!canEdit(book)) throw new Error('Only editors of the sheet can add tasks.');
+  var t = JSON.parse(json || '{}'), text = function (k, max) { return plain(String(t[k] == null ? '' : t[k]).trim().slice(0, max || 300)); };
+  var item = text('item');
+  if (!item) throw new Error('Give the task a name.');
+  var day = isoDay(String(t.date || '').trim() || Utilities.formatDate(CLOCK || new Date(), tz, 'yyyy-MM-dd'), tz);
+  if (!day) throw new Error('The date did not read as a date - use 2026-10-27.');
+  var status = statusOf(t.status || 'Not yet Started');
+  if (STATUSES.indexOf(status) < 0) throw new Error('Status must be one of ' + STATUSES.join(', ') + '.');
+  var p = day.split('-');
+  var rec = { date: new Date(+p[0], p[1] - 1, +p[2]), item: item, project: text('project'), stream: text('stream'), kind: text('kind'), status: status,
+    notes: text('notes', 2000), impact: text('impact', 500), link: text('link', 2000), 'for': text('for') };
+  setupIfNew(book);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var log = book.getSheetByName(TABS.log);
+    var head = log.getRange(1, 1, 1, log.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
+    log.getRange(log.getLastRow() + 1, 1, 1, head.length).setValues([head.map(function (h) { return h in rec ? rec[h] : ''; })]);
+    SpreadsheetApp.flush();
+  } finally { lock.releaseLock(); }
+  return getData();
+}
+
+/** Typed text stays text: Sheets reads a leading = + - @ as a formula, so such a value gets the ' that keeps it text. */
+function plain(s) { return /^[=+\-@]/.test(s) ? "'" + s : s; }
+
 // ---------------------------------------------------------------- first open ----------
 
 /**

@@ -15,6 +15,11 @@ const fs = require("fs");
     await page.click(`#tabs button[data-tab="${t}"]`);
     await page.screenshot({ path: path.join(out, t + ".png"), fullPage: t !== "timeline" });
   }
+  await page.click('#tabs button[data-tab="now"]');
+  await page.click("#add-btn");
+  await page.fill("#f-item", "Churn drivers deep dive");
+  await page.screenshot({ path: path.join(out, "new-task.png") });
+  await page.keyboard.press("Escape");
   const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
   await phone.goto("file://" + path.join(__dirname, "preview.html"));
   await phone.waitForSelector("#ov-tiles .tile");

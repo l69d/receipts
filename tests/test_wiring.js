@@ -20,6 +20,8 @@ section("server calls");
 ok(/google\.script\.run[\s\S]*\.getData\(\)/.test(app), "App falls back to getData");
 ok(/^function getData\(/m.test(code), "Code.gs defines getData");
 ok(/^function doGet\(/m.test(code) && /^function include\(/m.test(code), "doGet and include");
+ok(/\.addTask\(JSON\.stringify\(task\)\)/.test(app) && /^function addTask\(/m.test(code), "the task form calls addTask, and Code.gs defines it");
+ok(/canEdit\(book\)\) throw/.test(code.slice(code.indexOf("function addTask("))), "addTask checks the caller is an editor before anything else");
 
 section("includes");
 ["Model", "App"].forEach((n) => ok(index.includes(`<?!= include('${n}'); ?>`) && fs.existsSync(path.join(APP, n + ".html")), `Index includes ${n}`));

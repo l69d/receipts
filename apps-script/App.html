@@ -36,6 +36,13 @@ function start(payload) {
   var last = M.entries.length ? M.entries[M.entries.length - 1].date : null;
   $('meta').textContent = M.entries.length ? plural(M.entries.length, 'entry', 'entries') + ' since ' + Model.dm(M.entries[0].date) + ' · last logged ' + Model.dm(last) : 'Nothing logged yet';
   $('sheet').hidden = !P.sheet; if (P.sheet) $('sheet').href = P.sheet;
+  // the task form: editors only; its lists come from the log as it is now
+  $('add-btn').hidden = !P.canEdit;
+  var opts = function (list, blank) { return (blank ? '<option value="">' + blank + '</option>' : '') + list.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join(''); };
+  $('f-stream').innerHTML = opts(M.streams.map(function (s) { return s.name; }), '(none)');
+  $('f-kind').innerHTML = opts(Model.KINDS, '(none)');
+  $('f-status').innerHTML = opts(Model.STATUSES);
+  $('f-projects').innerHTML = M.threads.map(function (t) { return '<option value="' + esc(t.name) + '">'; }).join('');
   var C = P.config || {}, role = [C.title, C.org].filter(Boolean).join(', ');
   $('who').textContent = [C.name, role].filter(Boolean).map(function (s) { return '· ' + s; }).join(' ');
   if (C.name) document.title = 'Receipts · ' + C.name;
@@ -43,7 +50,52 @@ function start(payload) {
   render();
 }
 
+// ---------------------------------------------------------------- new task / log update ----------
+/** Open the form - empty for a new task, or filled from an open project for an update. */
+function openAdd(pre) {
+  pre = pre || {};
+  $('add-title').textContent = pre.project ? 'Update: ' + pre.project : 'New task';
+  $('f-item').value = ''; $('f-project').value = pre.project || ''; $('f-stream').value = pre.stream || ''; $('f-kind').value = pre.kind || '';
+  $('f-status').value = pre.status || 'Not yet Started'; $('f-date').value = M.asOf; $('f-for').value = pre.who || '';
+  $('f-notes').value = ''; $('f-link').value = ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
+  var d = $('add-dlg');
+  if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+  $('f-item').focus();
+}
+
+function closeAdd() { var d = $('add-dlg'); if (d.close) d.close(); else d.removeAttribute('open'); }
+
+function saveTask(e) {
+  e.preventDefault();
+  var task = { item: $('f-item').value.trim(), project: $('f-project').value.trim(), stream: $('f-stream').value, kind: $('f-kind').value,
+    status: $('f-status').value, date: $('f-date').value, 'for': $('f-for').value.trim(), notes: $('f-notes').value.trim(), link: $('f-link').value.trim() };
+  if (!task.item) { $('f-msg').innerHTML = '<span class="err">Give it a name.</span>'; $('f-item').focus(); return; }
+  $('f-save').disabled = true; $('f-msg').textContent = 'Saving…';
+  google.script.run.withSuccessHandler(function (s) {
+    start(JSON.parse(s));
+    closeAdd();
+    toast('Saved: ' + task.item);
+  }).withFailureHandler(function (err) {
+    $('f-msg').innerHTML = '<span class="err">' + esc(err.message || err) + '</span>';
+    $('f-save').disabled = false;
+  }).addTask(JSON.stringify(task));
+}
+
+function toast(text) {
+  var t = $('toast'); t.textContent = text; t.hidden = false;
+  clearTimeout(toast.timer); toast.timer = setTimeout(function () { t.hidden = true; }, 3500);
+}
+
 function setup() {
+  $('add-btn').addEventListener('click', function () { openAdd(); });
+  $('f-cancel').addEventListener('click', closeAdd);
+  $('add-form').addEventListener('submit', saveTask);
+  $('now-open').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-update]');
+    if (!b) return;
+    var t = M.threads.filter(function (x) { return x.name === b.dataset.update; })[0];
+    openAdd({ project: t.name, stream: t.stream, kind: t.latest.kind, status: t.status, who: t.latest.who });
+  });
   $('tabs').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { STATE.tab = b.dataset.tab; render(); } });
   $('status').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) { STATE.status = b.dataset.s; render(); } });
   $('stream').addEventListener('change', function () { STATE.stream = this.value; render(); });
@@ -116,7 +168,8 @@ function renderNow() {
     return '<div class="card thread" style="--pc:' + M.color[t.stream] + '"><div class="name">' + esc(t.name) + '</div><div class="meta" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">' +
       chip(t.stream) + badge(t.status) + '</div><div class="age">Started ' + Model.dm(t.first) + ' (' + ago(t.age) + ') · ' + plural(t.n, 'update') +
       (t.done ? ', ' + t.done + ' shipped along the way' : '') + ' · last <span class="' + (t.quiet >= 7 ? 'quiet' : '') + '">' + ago(t.quiet) + '</span></div>' +
-      '<div class="note">' + esc(t.note) + '</div></div>';
+      '<div class="note">' + esc(t.note) + '</div>' +
+      (P.canEdit ? '<div style="margin-top:8px"><button type="button" class="linkbtn" data-update="' + esc(t.name) + '">Log update</button></div>' : '') + '</div>';
   }).join('') : '<p class="empty">Nothing open.</p>';
   $('now-parked-sec').hidden = !N.parked.length;
   $('now-parked').innerHTML = N.parked.map(function (t) { return entry(t.latest); }).join('');
