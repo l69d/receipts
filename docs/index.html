@@ -788,7 +788,7 @@ var Model = (function () {
         done30: es.filter(function (e) { return e.status === 'Completed' && e.date >= last30 && e.date <= M.asOf; }).length,
         open: ts.filter(function (t) { return t.open; }).length,
         last: es.length ? es[es.length - 1].date : null,
-        weekly: M.weeks.map(function (w) { return es.filter(function (e) { return e.week === w && e.status === 'Completed'; }).length; }),
+        weekly: M.weeks.map(function (w) { return es.filter(function (e) { return e.week === w && e.status === 'Completed' && e.date <= M.asOf; }).length; }),
         threads: ts.slice().sort(function (x, y) { return (y.open - x.open) || (x.last < y.last ? 1 : x.last > y.last ? -1 : 0); })
           .map(function (t) { return { name: t.name, status: t.status, last: t.last, n: t.entries.length }; }),
         impacts: es.filter(function (e) { return e.status === 'Completed' && e.impact; }).slice(-3).reverse() };

@@ -110,6 +110,19 @@ section("outputs");
 section("ideas");
 eq(Model.ideas(M).length, X.ideas, "every idea");
 
+section("work dated after today (a task planned ahead)");
+{
+  const m = Model.load({ asOf: "2026-10-27", entries: [
+    ["2026-10-20", "a", "A", "S", "Analysis", "Completed", "", "", "", "", 2],
+    ["2026-11-03", "b", "B", "S", "Analysis", "Completed", "", "", "", "", 3],  // next week, already marked done
+    ["2026-11-04", "c", "C", "S", "Analysis", "Not yet Started", "", "", "", "", 4]
+  ], streams: [["S", ""]] });
+  eq(m.weeks, ["2026-10-19", "2026-10-26", "2026-11-02"], "the chart runs to the latest entry's week");
+  eq(Model.overview(m).totals, [1, 0, 0], "overview: future work has not shipped yet");
+  eq(Model.streams(m)[0].weekly, [1, 0, 0], "streams: the same rule");
+  eq(Model.now(m).open.map((t) => t.name), ["C"], "a future task is open work");
+}
+
 section("empty log");
 {
   const m = Model.load({ asOf: "2026-10-22", entries: [], streams: [], ideas: [] });
