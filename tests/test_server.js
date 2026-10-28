@@ -139,13 +139,17 @@ section("addTask: the page's + New task form");
 {
   const s = loadServer(demoGrids());
   const n0 = s.grids.log.length;
-  const P = JSON.parse(s.addTask(JSON.stringify({ item: "  City expansion model  ", project: "City expansion", stream: "Growth", kind: "Analysis", notes: "first cut", "for": "Strategy team" })));
+  const R = JSON.parse(s.addTask(JSON.stringify({ item: "  City expansion model  ", project: "City expansion", stream: "Growth", kind: "Analysis", notes: "first cut", "for": "Strategy team" })));
   const row = s.grids.log[n0];
   eq(s.grids.log.length, n0 + 1, "one row added under the last row");
   eq([row[1], row[2], row[3], row[4], row[5], row[6], row[9]], ["City expansion model", "City expansion", "Growth", "Analysis", "Not yet Started", "first cut", "Strategy team"],
     "trimmed fields under their headers; status defaults to Not yet Started");
   ok(row[0] instanceof s.Date && row[0].getDate() === +X.as_of.slice(8), "date defaults to today, as a date cell");
-  ok(P.entries.some((e) => e[1] === "City expansion model" && e[5] === "Not yet Started"), "the returned payload has it - the page redraws with it");
+  eq(R.entry, [X.as_of, "City expansion model", "City expansion", "Growth", "Analysis", "Not yet Started", "first cut", "", "", "Strategy team", n0 + 1],
+    "the reply is the row as the page reads the log, with its sheet row - not the whole payload");
+  eq(R.note, null, "no note involved");
+  ok(JSON.stringify(R).length < 400, "a small reply");
+  eq(JSON.parse(s.getData()).entries.find((e) => e[1] === "City expansion model").slice(0, 10), R.entry.slice(0, 10), "what the reply says is what a reload reads");
   const at = (o) => { try { s.addTask(JSON.stringify(o)); return "saved"; } catch (e) { return e.message; } };
   ok(/name/.test(at({ item: "   " })), "a blank name is refused");
   ok(/date/.test(at({ item: "x", date: "31/02/2026" })), "a date that is not a day is refused");
@@ -174,40 +178,63 @@ section("notes: the notepad");
 {
   const s = loadServer(demoGrids());
   JSON.parse(s.getData());
+  const notes = () => JSON.parse(s.getData()).notes;
   ok(!s.grids.notes, "no notes tab until the first note");
-  let P = JSON.parse(s.saveNote(JSON.stringify({ text: "  Ask Sam about the churn deck\nneeds the Q3 cohorts  " })));
+  const R = JSON.parse(s.saveNote(JSON.stringify({ text: "  Ask Sam about the churn deck\nneeds the Q3 cohorts  " })));
   eq(s.grids.notes[0], s.NOTE_HEAD, "the notes tab is made with its header");
-  eq(P.notes.length, 1, "the payload carries it");
-  const [id, created, updated, text, state, task] = P.notes[0];
-  ok(/^n/.test(id) && created === updated && /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(created), "an id and a created / updated stamp");
+  eq(Object.keys(R).sort(), ["created", "id", "updated"], "a new note's reply is only what the page cannot know: its id and stamps");
+  ok(/^n/.test(R.id) && R.created === R.updated && /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(R.created), "an id and a created / updated stamp");
+  let N = notes();
+  eq(N.length, 1, "a reload has it");
+  const [id, created, updated, text, state, task] = N[0];
+  eq([id, created, updated], [R.id, R.created, R.updated], "... with what the reply said");
   eq([text, state, task], ["Ask Sam about the churn deck\nneeds the Q3 cohorts", "Open", ""], "trimmed text, open, no task yet");
-  P = JSON.parse(s.saveNote(JSON.stringify({ text: "second note" })));
-  eq(P.notes.map((n) => n[3]), ["second note", "Ask Sam about the churn deck\nneeds the Q3 cohorts"], "newest first");
-  ok(P.notes[0][0] !== P.notes[1][0], "ids are unique, even within a minute");
-  P = JSON.parse(s.saveNote(JSON.stringify({ id, text: "Ask Sam about the churn deck (edited)" })));
-  eq(P.notes.find((n) => n[0] === id)[3], "Ask Sam about the churn deck (edited)", "an edit replaces the text, by id");
+  const R2 = JSON.parse(s.saveNote(JSON.stringify({ text: "second note" })));
+  N = notes();
+  eq(N.map((n) => n[3]), ["second note", "Ask Sam about the churn deck\nneeds the Q3 cohorts"], "newest first");
+  ok(R2.id !== id, "ids are unique, even within a minute");
+  const E = JSON.parse(s.saveNote(JSON.stringify({ id, text: "Ask Sam about the churn deck (edited)" })));
+  eq(Object.keys(E), ["updated"], "an edit's reply is just the new stamp");
+  eq(notes().find((n) => n[0] === id)[3], "Ask Sam about the churn deck (edited)", "an edit replaces the text, by id");
   eq(s.grids.notes.length, 3, "... without adding a row");
   const at = (fn, o) => { try { s[fn](JSON.stringify(o)); return "saved"; } catch (e) { return e.message; } };
   ok(/empty/.test(at("saveNote", { text: "   " })), "an empty note is refused");
   ok(/no longer/.test(at("saveNote", { id: "n-gone", text: "x" })), "editing a note that is not there is refused");
-  P = JSON.parse(s.noteState(JSON.stringify({ id, state: "Archived" })));
-  eq(P.notes.find((n) => n[0] === id)[4], "Archived", "archive");
-  P = JSON.parse(s.noteState(JSON.stringify({ id, state: "Open" })));
-  eq(P.notes.find((n) => n[0] === id)[4], "Open", "reopen");
+  eq(Object.keys(JSON.parse(s.noteState(JSON.stringify({ id, state: "Archived" })))), ["updated"], "archive: a reply of just the stamp");
+  eq(notes().find((n) => n[0] === id)[4], "Archived", "... and it is archived");
+  s.noteState(JSON.stringify({ id, state: "Open" }));
+  eq(notes().find((n) => n[0] === id)[4], "Open", "reopen");
   ok(/A note is/.test(at("noteState", { id, state: "Deleted" })), "an unknown state is refused");
   at("saveNote", { text: "=HYPERLINK(\"https://evil.example\")" });
-  ok(s.grids.notes.some((r) => r[3] === "'=HYPERLINK(\"https://evil.example\")"), "a note starting = stays text");
+  ok(s.grids.notes.some((r) => r[3] === "'=HYPERLINK(\"https://evil.example\")"), "a note starting = is stored as text");
+  ok(notes().some((n) => n[3] === "=HYPERLINK(\"https://evil.example\")"), "... and reads back as typed");
   const n0 = s.grids.log.length;
-  P = JSON.parse(s.addTask(JSON.stringify({ item: "Churn deck", notes: "needs the Q3 cohorts", fromNote: id })));
+  const T = JSON.parse(s.addTask(JSON.stringify({ item: "Churn deck", notes: "needs the Q3 cohorts", fromNote: id })));
   eq(s.grids.log.length, n0 + 1, "Make a task: the task goes into the log");
-  eq(P.notes.find((n) => n[0] === id).slice(4), ["Made a task", "Churn deck"], "... and the note says which task it became, in the same save");
+  eq(Object.keys(T.note), ["updated"], "... and the reply carries the note's new stamp");
+  eq(notes().find((n) => n[0] === id).slice(4), ["Made a task", "Churn deck"], "... and the note says which task it became, in the same save");
   const v = loadServer(s.grids, "someone.else@acme.example", [USER]);
-  eq(JSON.parse(v.getData()).notes, [], "a viewer is never sent the notes");
+  const PV = JSON.parse(v.getData());
+  eq(PV.notes, [], "a viewer is never sent the notes");
   let refused = "";
   try { v.saveNote(JSON.stringify({ text: "sneaky" })); } catch (e) { refused = e.message; }
   ok(/Only editors/.test(refused), "a viewer cannot write a note");
   try { v.noteState(JSON.stringify({ id, state: "Archived" })); refused = ""; } catch (e) { refused = e.message; }
   ok(/Only editors/.test(refused), "... nor archive one");
+}
+
+section("notes: what you type is what you get back");
+{
+  const s = loadServer(demoGrids());
+  JSON.parse(s.getData());
+  const odd = ["27/10", "1e3", "007", "2026-10-27", "=SUM(1,1)", "+5 to the plan", "-3 stores", "@Sam", "'quoted'", "plain words"];
+  odd.forEach((t) => s.saveNote(JSON.stringify({ text: t })));
+  const back = JSON.parse(s.getData()).notes.map((n) => n[3]).reverse();
+  eq(back, odd, "dates, numbers, formulas and quotes come back exactly as typed");
+  ok(s.grids.notes.slice(1).every((r) => String(r[3])[0] === "'"), "every note is stored with Sheets' text mark, so nothing is ever turned into a date, number or formula");
+  const id = JSON.parse(s.getData()).notes[0][0];
+  s.saveNote(JSON.stringify({ id, text: "27/10 again" }));
+  eq(JSON.parse(s.getData()).notes[0][3], "27/10 again", "an edit is stored the same way");
 }
 
 section("only editors get the sheet");

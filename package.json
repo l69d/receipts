@@ -1,6 +1,6 @@
 {
   "name": "receipts",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Receipts - show the receipts for your work. A Google Sheet + web app of what you are working on, what shipped and what it changed, with a link to every deliverable - kept up to date by Claude Code.",
   "license": "MIT",

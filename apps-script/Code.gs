@@ -96,41 +96,53 @@ function isoDay(v, tz) {
   return !isNaN(d) && d.toISOString().slice(0, 10) === s ? s : null;  // 2026-02-30 is not a day
 }
 
-/** Only the sheet's editors see its link: the app runs as the deployer, so the link alone must not open the sheet. */
+/**
+ * Only the sheet's editors see its link: the app runs as the deployer, so the link alone must not open the sheet.
+ * Asking the sheet for its editors is slow, so a confirmed editor is remembered for a minute (a removed editor keeps
+ * access for at most that long); a "no" is never remembered, so a newly added editor works at once.
+ */
 function canEdit(book) {
   var me = String(Session.getActiveUser().getEmail() || '').toLowerCase();
-  return !!me && book.getEditors().some(function (u) { return String(u.getEmail()).toLowerCase() === me; });
+  if (!me) return false;
+  var cache = null, key = 'editor:' + me;
+  try { cache = CacheService.getScriptCache(); if (cache.get(key)) return true; } catch (e) { cache = null; }
+  var yes = book.getEditors().some(function (u) { return String(u.getEmail()).toLowerCase() === me; });
+  if (yes && cache) try { cache.put(key, '1', 60); } catch (e) {}
+  return yes;
 }
 
 /**
- * The page's "+ New task" / "Log update" form: one row into the log tab, under its own headers. Editors only (the app
- * writes as the deployer, so the link alone must not be enough); every field checked here, whatever the page sent.
- * Returns the fresh payload, so the page redraws with the new row.
+ * The page's "+ New task" / "Log update" / "Make a task" form: one row into the log tab, under its own headers. Editors
+ * only (the app writes as the deployer, so the link alone must not be enough); every field checked here, whatever the
+ * page sent. Returns just what the page needs to show it - {entry: the row as the page reads the log, note: {updated}
+ * when it came from a note} - not the whole payload: a save is a few spreadsheet calls, not sixty.
  */
 function addTask(json) {
   var book = SpreadsheetApp.getActiveSpreadsheet(), tz = Session.getScriptTimeZone();
   if (!canEdit(book)) throw new Error('Only editors of the sheet can add tasks.');
-  var t = JSON.parse(json || '{}'), text = function (k, max) { return plain(String(t[k] == null ? '' : t[k]).trim().slice(0, max || 300)); };
-  var item = text('item');
+  var t = JSON.parse(json || '{}'), clean = function (k, max) { return String(t[k] == null ? '' : t[k]).trim().slice(0, max || 300); };
+  var item = clean('item');
   if (!item) throw new Error('Give the task a name.');
   var day = isoDay(String(t.date || '').trim() || Utilities.formatDate(CLOCK || new Date(), tz, 'yyyy-MM-dd'), tz);
   if (!day) throw new Error('The date did not read as a date - use 2026-10-27.');
   var status = statusOf(t.status || 'Not yet Started');
   if (STATUSES.indexOf(status) < 0) throw new Error('Status must be one of ' + STATUSES.join(', ') + '.');
-  var p = day.split('-');
-  var rec = { date: new Date(+p[0], p[1] - 1, +p[2]), item: item, project: text('project'), stream: text('stream'), kind: text('kind'), status: status,
-    notes: text('notes', 2000), impact: text('impact', 500), link: text('link', 2000), 'for': text('for') };
+  var f = { item: item, project: clean('project'), stream: clean('stream'), kind: clean('kind'), notes: clean('notes', 2000), impact: clean('impact', 500),
+    link: clean('link', 2000), 'for': clean('for') };
+  var p = day.split('-'), rec = { date: new Date(+p[0], p[1] - 1, +p[2]), status: status };
+  Object.keys(f).forEach(function (k) { rec[k] = plain(f[k]); });  // typed text stays text, never a formula
   setupIfNew(book);
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
+  var row, note = null;
   try {
     var log = book.getSheetByName(TABS.log);
     var head = log.getRange(1, 1, 1, log.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
-    log.getRange(log.getLastRow() + 1, 1, 1, head.length).setValues([head.map(function (h) { return h in rec ? rec[h] : ''; })]);
-    if (t.fromNote) setNote(book, String(t.fromNote), { state: 'Made a task', task: item });  // the note it came from, in the same save
-    SpreadsheetApp.flush();
+    row = log.getLastRow() + 1;
+    log.getRange(row, 1, 1, head.length).setValues([head.map(function (h) { return h in rec ? rec[h] : ''; })]);
+    if (t.fromNote) note = setNote(book, String(t.fromNote), { state: 'Made a task', task: asText(item) });  // the note it came from, in the same save
   } finally { lock.releaseLock(); }
-  return getData();
+  return JSON.stringify({ entry: [day, f.item, f.project, f.stream, f.kind, status, f.notes, f.impact, f.link, f['for'], row], note: note });
 }
 
 /** Typed text stays text: Sheets reads a leading = + - @ as a formula, so such a value gets the ' that keeps it text. */
@@ -150,28 +162,36 @@ function readNotes(book, tz) {
     .map(function (r) { return r.slice(0, 6); });
 }
 
-/** The page's notepad: a new note ({text}), or an edit ({id, text}). Returns the fresh payload. */
+/** Text written to a cell as text, whatever it looks like - a leading ' is Sheets' own mark for it (a note "27/10" stays "27/10"). */
+function asText(s) { return "'" + s; }
+
+/**
+ * The page's notepad: a new note ({text}) or an edit ({id, text}). Returns only what changed - {id, created, updated} for a
+ * new note, {updated} for an edit - so a save is a handful of spreadsheet calls and a reply of a few dozen characters.
+ */
 function saveNote(json) {
   var book = SpreadsheetApp.getActiveSpreadsheet();
   if (!canEdit(book)) throw new Error('Only editors of the sheet can keep notes.');
-  var t = JSON.parse(json || '{}'), text = plain(String(t.text == null ? '' : t.text).trim().slice(0, 5000));
+  var t = JSON.parse(json || '{}'), text = String(t.text == null ? '' : t.text).trim().slice(0, 5000);
   if (!text) throw new Error('The note is empty.');
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
+  var out;
   try {
-    var sheet = notesTab(book), now = nowStamp();
     if (t.id) {
-      if (!setNote(book, String(t.id), { text: text })) throw new Error('That note is no longer in the sheet.');
+      out = setNote(book, String(t.id), { text: asText(text) });
+      if (!out) throw new Error('That note is no longer in the sheet.');
     } else {
-      var id = 'n' + (CLOCK || new Date()).getTime().toString(36) + '-' + (sheet.getLastRow() + 1);
-      sheet.getRange(sheet.getLastRow() + 1, 1, 1, NOTE_HEAD.length).setValues([[id, now, now, text, 'Open', '']]);
+      var sheet = notesTab(book), now = nowStamp(), row = sheet.getLastRow() + 1;
+      var id = 'n' + (CLOCK || new Date()).getTime().toString(36) + '-' + row;
+      sheet.getRange(row, 1, 1, NOTE_HEAD.length).setValues([[id, now, now, asText(text), 'Open', '']]);
+      out = { id: id, created: now, updated: now };
     }
-    SpreadsheetApp.flush();
   } finally { lock.releaseLock(); }
-  return getData();
+  return JSON.stringify(out);
 }
 
-/** Archive a note, or bring it back ({id, state}). Returns the fresh payload. */
+/** Archive a note, or bring it back ({id, state}). Returns {updated}. */
 function noteState(json) {
   var book = SpreadsheetApp.getActiveSpreadsheet();
   if (!canEdit(book)) throw new Error('Only editors of the sheet can keep notes.');
@@ -179,25 +199,30 @@ function noteState(json) {
   if (NOTE_STATES.indexOf(t.state) < 0) throw new Error('A note is ' + NOTE_STATES.join(', ') + '.');
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
+  var out;
   try {
-    if (!setNote(book, String(t.id || ''), { state: t.state })) throw new Error('That note is no longer in the sheet.');
-    SpreadsheetApp.flush();
+    out = setNote(book, String(t.id || ''), { state: t.state });
+    if (!out) throw new Error('That note is no longer in the sheet.');
   } finally { lock.releaseLock(); }
-  return getData();
+  return JSON.stringify(out);
 }
 
-/** Change a note's fields by id (the caller holds the lock); false when the id is not there. */
+/**
+ * Change a note's fields by id (the caller holds the lock): one read of the tab, then one write per changed cell - only
+ * those, so the rest of the row is never rewritten. Returns {updated}, or null when the id is not there.
+ */
 function setNote(book, id, change) {
   var sheet = book.getSheetByName(TABS.notes);
-  if (!sheet || sheet.getLastRow() < 2) return false;
-  var head = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
-  var ids = sheet.getRange(2, head.indexOf('id') + 1, sheet.getLastRow() - 1, 1).getValues();
-  for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === id) {
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var v = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+  var head = v[0].map(function (h) { return String(h).trim().toLowerCase(); }), at = head.indexOf('id');
+  if (at < 0) return null;
+  for (var i = 1; i < v.length; i++) if (String(v[i][at]) === id) {
     change.updated = nowStamp();
-    Object.keys(change).forEach(function (k) { if (head.indexOf(k) >= 0) sheet.getRange(i + 2, head.indexOf(k) + 1).setValue(change[k]); });
-    return true;
+    Object.keys(change).forEach(function (k) { if (head.indexOf(k) >= 0) sheet.getRange(i + 1, head.indexOf(k) + 1).setValue(change[k]); });
+    return { updated: change.updated };
   }
-  return false;
+  return null;
 }
 
 function notesTab(book) {

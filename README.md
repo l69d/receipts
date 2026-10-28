@@ -74,6 +74,11 @@ status, date, who asked, notes, links - and it's in the sheet. On the **Now** ta
 
 Only the sheet's editors see the button, and the server checks again on every save.
 
+Saving is instant: the task or note is on the page the moment you save, and the server confirms in the background. If a
+save fails, nothing is lost - your words go back into the box (or the task form comes back as you left it). A save
+touches only what it changes: a few spreadsheet calls and a reply of a few dozen characters, held to a budget by
+`tests/test_speed.js`.
+
 ![New task](docs/screenshots/new-task.png)
 
 ## Notes

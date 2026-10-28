@@ -59,8 +59,8 @@ function openAdd(pre) {
   STATE.fromNote = pre.fromNote || null;
   $('add-title').textContent = pre.fromNote ? 'Task from a note' : pre.project ? 'Update: ' + pre.project : 'New task';
   $('f-item').value = pre.item || ''; $('f-project').value = pre.project || ''; $('f-stream').value = pre.stream || ''; $('f-kind').value = pre.kind || '';
-  $('f-status').value = pre.status || 'Not yet Started'; $('f-date').value = M.asOf; $('f-for').value = pre.who || '';
-  $('f-notes').value = pre.notes || ''; $('f-link').value = ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
+  $('f-status').value = pre.status || 'Not yet Started'; $('f-date').value = pre.date || M.asOf; $('f-for').value = pre.who || '';
+  $('f-notes').value = pre.notes || ''; $('f-link').value = pre.link || ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
   var d = $('add-dlg');
   if (d.showModal) d.showModal(); else d.setAttribute('open', '');
   $('f-item').focus();
@@ -74,15 +74,25 @@ function saveTask(e) {
     status: $('f-status').value, date: $('f-date').value, 'for': $('f-for').value.trim(), notes: $('f-notes').value.trim(), link: $('f-link').value.trim(),
     fromNote: STATE.fromNote };
   if (!task.item) { $('f-msg').innerHTML = '<span class="err">Give it a name.</span>'; $('f-item').focus(); return; }
-  $('f-save').disabled = true; $('f-msg').textContent = 'Saving…';
-  google.script.run.withSuccessHandler(function (s) {
-    start(JSON.parse(s));
-    closeAdd();
-    toast('Saved: ' + task.item);
-  }).withFailureHandler(function (err) {
-    $('f-msg').innerHTML = '<span class="err">' + esc(err.message || err) + '</span>';
-    $('f-save').disabled = false;
-  }).addTask(JSON.stringify(task));
+  // the task is on the page and the form is closed now; the server confirms in the background
+  var row = P.entries.reduce(function (m, r) { return Math.max(m, r[10] || 0); }, 1) + 1;
+  var entry = [task.date || M.asOf, task.item, task.project, task.stream, task.kind, task.status, task.notes, '', task.link, task['for'], row];
+  var note = task.fromNote ? noteById(task.fromNote) : null, old = note ? note.slice() : null;
+  P.entries.push(entry);
+  if (note) { note[4] = 'Made a task'; note[5] = task.item; }
+  closeAdd(); start(P); toast('Saving: ' + task.item);
+  rpc('addTask', task, function (r) {
+    restore(entry, r.entry);  // the row as the server wrote it
+    if (note && r.note) note[2] = r.note.updated;
+    start(P); toast('Saved: ' + task.item);
+  }, function (m) {
+    P.entries.splice(P.entries.indexOf(entry), 1);  // not saved: back off the page, and the form comes back as it was
+    if (note) restore(note, old);
+    start(P);
+    openAdd({ fromNote: task.fromNote, item: task.item, project: task.project, stream: task.stream, kind: task.kind, status: task.status, who: task['for'],
+      notes: task.notes, date: task.date, link: task.link });
+    $('f-msg').innerHTML = '<span class="err">Not saved: ' + esc(m) + '</span>';
+  });
 }
 
 function toast(text) {
@@ -249,14 +259,14 @@ function renderNotes() {
     return '<button data-f="' + f + '" aria-pressed="' + (f === STATE.noteFilter) + '">' + esc(f) + ' · ' + (N.counts[f] || 0) + '</button>';
   }).join('');
   $('n-list').innerHTML = N.list.length ? N.list.map(function (n) {
-    var editing = STATE.editing === n.id;
+    var editing = STATE.editing === n.id, saving = /^tmp/.test(n.id);
     return '<div class="card note-card st-' + n.state.replace(/ /g, '-') + '" data-id="' + esc(n.id) + '">' +
       (editing ? '<textarea maxlength="5000" class="n-edit">' + esc(n.text) + '</textarea><div class="crow"><button class="btn" type="button" data-act="save-edit">Save</button>' +
         '<button class="btn ghost" type="button" data-act="cancel-edit">Cancel</button></div>'
         : '<div class="txt">' + esc(n.text) + '</div>') +
       (n.state === 'Made a task' && n.task ? '<div class="tasked">Made a task: ' + esc(n.task) + '</div>' : '') +
-      '<div class="when">' + esc(n.created) + (n.updated && n.updated !== n.created ? ' · edited ' + esc(n.updated) : '') + '</div>' +
-      (editing ? '' : '<div class="acts">' +
+      '<div class="when">' + (saving ? 'Saving…' : esc(n.created) + (n.updated && n.updated !== n.created ? ' · edited ' + esc(n.updated) : '')) + '</div>' +
+      (editing || saving ? '' : '<div class="acts">' +
         (n.state !== 'Made a task' ? '<button type="button" class="linkbtn" data-act="task">Make a task</button>' : '') +
         '<button type="button" class="linkbtn" data-act="edit">Edit</button>' +
         (n.state === 'Archived' ? '<button type="button" class="linkbtn" data-act="reopen">Reopen</button>' : '<button type="button" class="linkbtn" data-act="archive">Archive</button>') +
@@ -264,36 +274,55 @@ function renderNotes() {
   }).join('') : '<p class="empty">' + (STATE.noteFilter === 'Open' ? 'No open notes - jot one down above.' : 'Nothing here.') + '</p>';
 }
 
-/** A server call that redraws with the payload it returns; fail(message) on an error. */
-function call(fn, arg, done, fail) {
-  google.script.run.withSuccessHandler(function (s) { start(JSON.parse(s)); if (done) done(); })
-    .withFailureHandler(function (e) { if (fail) fail(e.message || String(e)); else toast(e.message || String(e)); })[fn](JSON.stringify(arg));
+/**
+ * A server call. The page already shows the change, so nothing is redrawn from the reply: ok(reply) takes what the server
+ * confirms (ids, stamps), fail(message) undoes the change on the page.
+ */
+function rpc(fn, arg, ok, fail) {
+  google.script.run.withSuccessHandler(function (s) { ok(JSON.parse(s)); })
+    .withFailureHandler(function (e) { fail(e.message || String(e)); })[fn](JSON.stringify(arg));
 }
 
+function stampNow() {
+  var d = new Date(), p = function (n) { return ('0' + n).slice(-2); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function noteById(id) { return P.notes.filter(function (n) { return n[0] === id; })[0]; }
+function restore(arr, old) { for (var i = 0; i < old.length; i++) arr[i] = old[i]; }
+
+/** A note is on the page and the box is clear the moment you save; the server confirms in the background. */
 function addNote() {
   var text = $('n-text').value.trim();
   if (!text) { $('n-msg').innerHTML = '<span class="err">Write something first.</span>'; return; }
-  $('n-save').disabled = true; $('n-msg').textContent = 'Saving…';
-  call('saveNote', { text: text }, function () {
-    $('n-text').value = ''; draft(''); $('n-msg').textContent = ''; $('n-save').disabled = false; STATE.noteFilter = 'Open'; renderNotes(); toast('Note saved');
-  }, function (m) { $('n-msg').innerHTML = '<span class="err">' + esc(m) + '</span>'; $('n-save').disabled = false; });
+  var at = stampNow(), note = ['tmp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at, at, text, 'Open', ''];
+  P.notes.unshift(note);
+  $('n-text').value = ''; draft(''); $('n-msg').textContent = ''; STATE.noteFilter = 'Open'; renderNotes();
+  rpc('saveNote', { text: text }, function (r) {
+    note[0] = r.id; note[1] = r.created; note[2] = r.updated; renderNotes();
+  }, function (m) {
+    P.notes.splice(P.notes.indexOf(note), 1);  // not saved: take it off the page and give the words back to the box
+    var box = $('n-text'); box.value = box.value ? text + '\n\n' + box.value : text; draft(box.value);
+    $('n-msg').innerHTML = '<span class="err">Not saved: ' + esc(m) + '</span>'; toast('Note not saved - it is back in the box'); renderNotes();
+  });
 }
 
 function noteAction(e) {
   var b = e.target.closest('[data-act]'), card = e.target.closest('[data-id]');
   if (!b || !card) return;
-  var id = card.dataset.id, n = Model.notes(P.notes, 'All').list.filter(function (x) { return x.id === id; })[0], act = b.dataset.act;
+  var id = card.dataset.id, raw = noteById(id), n = Model.notes(P.notes, 'All').list.filter(function (x) { return x.id === id; })[0], act = b.dataset.act;
+  if (!raw || /^tmp/.test(id)) return;  // not confirmed by the server yet
   if (act === 'task') return openAdd({ fromNote: id, item: n.title, notes: n.rest });
   if (act === 'edit') { STATE.editing = id; renderNotes(); $('n-list').querySelector('textarea').focus(); return; }
   if (act === 'cancel-edit') { STATE.editing = null; renderNotes(); return; }
+  var old = raw.slice(), undo = function (m) { restore(raw, old); renderNotes(); toast('Not saved: ' + m); };
   if (act === 'save-edit') {
     var text = card.querySelector('textarea').value.trim();
     if (!text) return toast('A note cannot be empty - archive it instead.');
-    b.disabled = true;
-    return call('saveNote', { id: id, text: text }, function () { STATE.editing = null; renderNotes(); toast('Note updated'); });
+    raw[3] = text; STATE.editing = null; renderNotes(); toast('Note updated');
+    return rpc('saveNote', { id: id, text: text }, function (r) { raw[2] = r.updated; renderNotes(); }, undo);
   }
-  b.disabled = true;
-  call('noteState', { id: id, state: act === 'archive' ? 'Archived' : 'Open' }, function () { toast(act === 'archive' ? 'Archived' : 'Reopened'); });
+  raw[4] = act === 'archive' ? 'Archived' : 'Open'; renderNotes(); toast(act === 'archive' ? 'Archived' : 'Reopened');
+  rpc('noteState', { id: id, state: raw[4] }, function (r) { raw[2] = r.updated; renderNotes(); }, undo);
 }
 
 /** The unsaved note survives a reload - in this browser only (a convenience; it may be unavailable). */

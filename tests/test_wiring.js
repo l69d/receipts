@@ -20,10 +20,10 @@ section("server calls");
 ok(/google\.script\.run[\s\S]*\.getData\(\)/.test(app), "App falls back to getData");
 ok(/^function getData\(/m.test(code), "Code.gs defines getData");
 ok(/^function doGet\(/m.test(code) && /^function include\(/m.test(code), "doGet and include");
-ok(/\.addTask\(JSON\.stringify\(task\)\)/.test(app) && /^function addTask\(/m.test(code), "the task form calls addTask, and Code.gs defines it");
+ok(/rpc\('addTask'/.test(app) && /^function addTask\(/m.test(code), "the task form calls addTask, and Code.gs defines it");
 ok(/canEdit\(book\)\) throw/.test(code.slice(code.indexOf("function addTask("))), "addTask checks the caller is an editor before anything else");
 ["saveNote", "noteState"].forEach((f) => {
-  ok(new RegExp(`call\\('${f}'`).test(app) && new RegExp(`^function ${f}\\(`, "m").test(code), `the notepad calls ${f}, and Code.gs defines it`);
+  ok(new RegExp(`rpc\\('${f}'`).test(app) && new RegExp(`^function ${f}\\(`, "m").test(code), `the notepad calls ${f}, and Code.gs defines it`);
   ok(/canEdit\(book\)\) throw/.test(code.slice(code.indexOf(`function ${f}(`)).split("\nfunction ")[0]), `${f} checks the caller is an editor`);
 });
 ok(/notes: edit \? readNotes\(book, tz\) : \[\]/.test(code), "getData sends notes to editors only");

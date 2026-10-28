@@ -300,6 +300,8 @@ function fakeServices(grids, user, editors, DateCtor, evaluate, log) {
   function out(sheet, v) {
     if (v && typeof v === 'object' && v.$d) { var p = v.$d.split('-'); return new D(+p[0], p[1] - 1, +p[2]); }
     if (typeof v === 'string' && v[0] === '=' && evaluate) return evaluate(grids, sheet, v);
+    // as Sheets: a leading ' only marks the cell as text - it is not part of what getValues returns
+    if (typeof v === 'string' && v[0] === "'") return v.slice(1);
     return v === undefined ? '' : v;
   }
   function a1(s) {
@@ -308,7 +310,7 @@ function fakeServices(grids, user, editors, DateCtor, evaluate, log) {
     var r = +m[2], c = col(m[1]);  // 'A2:A' runs to the sheet's last row (1000)
     return [r, c, m[3] ? (m[4] ? +m[4] : 1000) - r + 1 : 1, m[3] ? col(m[3]) - c + 1 : 1];
   }
-  var ids = {};
+  var ids = {}, cache = {};
   function sheet(name) {
     var g = grids[name], me;
     if (!(name in ids)) ids[name] = Object.keys(ids).length * 1000 + 7;
@@ -361,6 +363,7 @@ function fakeServices(grids, user, editors, DateCtor, evaluate, log) {
     SpreadsheetApp: recorder({ getActiveSpreadsheet: function () { return book; }, flush: function () {} }, 'SpreadsheetApp'),
     Session: { getActiveUser: function () { return { getEmail: function () { return user || ''; } }; }, getScriptTimeZone: function () { return 'Asia/Kolkata'; } },
     LockService: { getScriptLock: function () { return { waitLock: function () {}, releaseLock: function () {} }; } },
+    CacheService: { getScriptCache: function () { return { get: function (k) { return k in cache ? cache[k] : null; }, put: function (k, v) { cache[k] = v; } }; } },
     ScriptApp: recorder({ getProjectTriggers: function () { return []; }, getService: function () { return { getUrl: function () { return 'https://script.google.com/macros/s/fake/exec'; } }; } }, 'ScriptApp'),
     Charts: recorder({}, 'Charts'),
     ContentService: recorder({ createTextOutput: function (s) { var o = recorder({ text: s }, 'TextOutput', function () { return o; }); return o; } }, 'ContentService'),
@@ -378,7 +381,7 @@ if (false) module.exports = { fakeServices: fakeServices, fakeFormatDate: fakeFo
 var __DATA__ = null;
 var SERVER = (function () {
   var S = fakeServices(__GRIDS__, "alex.rivera@acme.example", ["alex.rivera@acme.example"]);
-  var SpreadsheetApp = S.SpreadsheetApp, Session = S.Session, LockService = S.LockService;
+  var SpreadsheetApp = S.SpreadsheetApp, Session = S.Session, LockService = S.LockService, CacheService = S.CacheService;
   var Utilities = { formatDate: fakeFormatDate };
 // Receipts - a web app bound to a Google Sheet: what you are working on, what you shipped, and what it changed - with a link
 // to every deliverable. Runs as the deployer, so viewers need only the link. The sheet's `log` tab is the source (one row per
@@ -478,41 +481,53 @@ function isoDay(v, tz) {
   return !isNaN(d) && d.toISOString().slice(0, 10) === s ? s : null;  // 2026-02-30 is not a day
 }
 
-/** Only the sheet's editors see its link: the app runs as the deployer, so the link alone must not open the sheet. */
+/**
+ * Only the sheet's editors see its link: the app runs as the deployer, so the link alone must not open the sheet.
+ * Asking the sheet for its editors is slow, so a confirmed editor is remembered for a minute (a removed editor keeps
+ * access for at most that long); a "no" is never remembered, so a newly added editor works at once.
+ */
 function canEdit(book) {
   var me = String(Session.getActiveUser().getEmail() || '').toLowerCase();
-  return !!me && book.getEditors().some(function (u) { return String(u.getEmail()).toLowerCase() === me; });
+  if (!me) return false;
+  var cache = null, key = 'editor:' + me;
+  try { cache = CacheService.getScriptCache(); if (cache.get(key)) return true; } catch (e) { cache = null; }
+  var yes = book.getEditors().some(function (u) { return String(u.getEmail()).toLowerCase() === me; });
+  if (yes && cache) try { cache.put(key, '1', 60); } catch (e) {}
+  return yes;
 }
 
 /**
- * The page's "+ New task" / "Log update" form: one row into the log tab, under its own headers. Editors only (the app
- * writes as the deployer, so the link alone must not be enough); every field checked here, whatever the page sent.
- * Returns the fresh payload, so the page redraws with the new row.
+ * The page's "+ New task" / "Log update" / "Make a task" form: one row into the log tab, under its own headers. Editors
+ * only (the app writes as the deployer, so the link alone must not be enough); every field checked here, whatever the
+ * page sent. Returns just what the page needs to show it - {entry: the row as the page reads the log, note: {updated}
+ * when it came from a note} - not the whole payload: a save is a few spreadsheet calls, not sixty.
  */
 function addTask(json) {
   var book = SpreadsheetApp.getActiveSpreadsheet(), tz = Session.getScriptTimeZone();
   if (!canEdit(book)) throw new Error('Only editors of the sheet can add tasks.');
-  var t = JSON.parse(json || '{}'), text = function (k, max) { return plain(String(t[k] == null ? '' : t[k]).trim().slice(0, max || 300)); };
-  var item = text('item');
+  var t = JSON.parse(json || '{}'), clean = function (k, max) { return String(t[k] == null ? '' : t[k]).trim().slice(0, max || 300); };
+  var item = clean('item');
   if (!item) throw new Error('Give the task a name.');
   var day = isoDay(String(t.date || '').trim() || Utilities.formatDate(CLOCK || new Date(), tz, 'yyyy-MM-dd'), tz);
   if (!day) throw new Error('The date did not read as a date - use 2026-10-27.');
   var status = statusOf(t.status || 'Not yet Started');
   if (STATUSES.indexOf(status) < 0) throw new Error('Status must be one of ' + STATUSES.join(', ') + '.');
-  var p = day.split('-');
-  var rec = { date: new Date(+p[0], p[1] - 1, +p[2]), item: item, project: text('project'), stream: text('stream'), kind: text('kind'), status: status,
-    notes: text('notes', 2000), impact: text('impact', 500), link: text('link', 2000), 'for': text('for') };
+  var f = { item: item, project: clean('project'), stream: clean('stream'), kind: clean('kind'), notes: clean('notes', 2000), impact: clean('impact', 500),
+    link: clean('link', 2000), 'for': clean('for') };
+  var p = day.split('-'), rec = { date: new Date(+p[0], p[1] - 1, +p[2]), status: status };
+  Object.keys(f).forEach(function (k) { rec[k] = plain(f[k]); });  // typed text stays text, never a formula
   setupIfNew(book);
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
+  var row, note = null;
   try {
     var log = book.getSheetByName(TABS.log);
     var head = log.getRange(1, 1, 1, log.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
-    log.getRange(log.getLastRow() + 1, 1, 1, head.length).setValues([head.map(function (h) { return h in rec ? rec[h] : ''; })]);
-    if (t.fromNote) setNote(book, String(t.fromNote), { state: 'Made a task', task: item });  // the note it came from, in the same save
-    SpreadsheetApp.flush();
+    row = log.getLastRow() + 1;
+    log.getRange(row, 1, 1, head.length).setValues([head.map(function (h) { return h in rec ? rec[h] : ''; })]);
+    if (t.fromNote) note = setNote(book, String(t.fromNote), { state: 'Made a task', task: asText(item) });  // the note it came from, in the same save
   } finally { lock.releaseLock(); }
-  return getData();
+  return JSON.stringify({ entry: [day, f.item, f.project, f.stream, f.kind, status, f.notes, f.impact, f.link, f['for'], row], note: note });
 }
 
 /** Typed text stays text: Sheets reads a leading = + - @ as a formula, so such a value gets the ' that keeps it text. */
@@ -532,28 +547,36 @@ function readNotes(book, tz) {
     .map(function (r) { return r.slice(0, 6); });
 }
 
-/** The page's notepad: a new note ({text}), or an edit ({id, text}). Returns the fresh payload. */
+/** Text written to a cell as text, whatever it looks like - a leading ' is Sheets' own mark for it (a note "27/10" stays "27/10"). */
+function asText(s) { return "'" + s; }
+
+/**
+ * The page's notepad: a new note ({text}) or an edit ({id, text}). Returns only what changed - {id, created, updated} for a
+ * new note, {updated} for an edit - so a save is a handful of spreadsheet calls and a reply of a few dozen characters.
+ */
 function saveNote(json) {
   var book = SpreadsheetApp.getActiveSpreadsheet();
   if (!canEdit(book)) throw new Error('Only editors of the sheet can keep notes.');
-  var t = JSON.parse(json || '{}'), text = plain(String(t.text == null ? '' : t.text).trim().slice(0, 5000));
+  var t = JSON.parse(json || '{}'), text = String(t.text == null ? '' : t.text).trim().slice(0, 5000);
   if (!text) throw new Error('The note is empty.');
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
+  var out;
   try {
-    var sheet = notesTab(book), now = nowStamp();
     if (t.id) {
-      if (!setNote(book, String(t.id), { text: text })) throw new Error('That note is no longer in the sheet.');
+      out = setNote(book, String(t.id), { text: asText(text) });
+      if (!out) throw new Error('That note is no longer in the sheet.');
     } else {
-      var id = 'n' + (CLOCK || new Date()).getTime().toString(36) + '-' + (sheet.getLastRow() + 1);
-      sheet.getRange(sheet.getLastRow() + 1, 1, 1, NOTE_HEAD.length).setValues([[id, now, now, text, 'Open', '']]);
+      var sheet = notesTab(book), now = nowStamp(), row = sheet.getLastRow() + 1;
+      var id = 'n' + (CLOCK || new Date()).getTime().toString(36) + '-' + row;
+      sheet.getRange(row, 1, 1, NOTE_HEAD.length).setValues([[id, now, now, asText(text), 'Open', '']]);
+      out = { id: id, created: now, updated: now };
     }
-    SpreadsheetApp.flush();
   } finally { lock.releaseLock(); }
-  return getData();
+  return JSON.stringify(out);
 }
 
-/** Archive a note, or bring it back ({id, state}). Returns the fresh payload. */
+/** Archive a note, or bring it back ({id, state}). Returns {updated}. */
 function noteState(json) {
   var book = SpreadsheetApp.getActiveSpreadsheet();
   if (!canEdit(book)) throw new Error('Only editors of the sheet can keep notes.');
@@ -561,25 +584,30 @@ function noteState(json) {
   if (NOTE_STATES.indexOf(t.state) < 0) throw new Error('A note is ' + NOTE_STATES.join(', ') + '.');
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
+  var out;
   try {
-    if (!setNote(book, String(t.id || ''), { state: t.state })) throw new Error('That note is no longer in the sheet.');
-    SpreadsheetApp.flush();
+    out = setNote(book, String(t.id || ''), { state: t.state });
+    if (!out) throw new Error('That note is no longer in the sheet.');
   } finally { lock.releaseLock(); }
-  return getData();
+  return JSON.stringify(out);
 }
 
-/** Change a note's fields by id (the caller holds the lock); false when the id is not there. */
+/**
+ * Change a note's fields by id (the caller holds the lock): one read of the tab, then one write per changed cell - only
+ * those, so the rest of the row is never rewritten. Returns {updated}, or null when the id is not there.
+ */
 function setNote(book, id, change) {
   var sheet = book.getSheetByName(TABS.notes);
-  if (!sheet || sheet.getLastRow() < 2) return false;
-  var head = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim().toLowerCase(); });
-  var ids = sheet.getRange(2, head.indexOf('id') + 1, sheet.getLastRow() - 1, 1).getValues();
-  for (var i = 0; i < ids.length; i++) if (String(ids[i][0]) === id) {
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var v = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+  var head = v[0].map(function (h) { return String(h).trim().toLowerCase(); }), at = head.indexOf('id');
+  if (at < 0) return null;
+  for (var i = 1; i < v.length; i++) if (String(v[i][at]) === id) {
     change.updated = nowStamp();
-    Object.keys(change).forEach(function (k) { if (head.indexOf(k) >= 0) sheet.getRange(i + 2, head.indexOf(k) + 1).setValue(change[k]); });
-    return true;
+    Object.keys(change).forEach(function (k) { if (head.indexOf(k) >= 0) sheet.getRange(i + 1, head.indexOf(k) + 1).setValue(change[k]); });
+    return { updated: change.updated };
   }
-  return false;
+  return null;
 }
 
 function notesTab(book) {
@@ -728,7 +756,9 @@ var LINKS = [
 var google = { script: { run: (function runner(ok, fail) {
   var r = { withSuccessHandler: function (f) { return runner(f, fail); }, withFailureHandler: function (f) { return runner(ok, f); } };
   ['getData', 'addTask', 'saveNote', 'noteState'].forEach(function (n) {
-    r[n] = function () { var a = arguments; setTimeout(function () { try { var v = SERVER[n].apply(null, a); if (ok) ok(v); } catch (e) { if (fail) fail(e); } }, 30); };
+    r[n] = function () { var a = arguments; // window.__DELAY__ (ms) slows the fake server, window.__FAIL__ (a function name) makes it fail - the suites use both to prove the page
+    // answers at once however slow or unreliable the server is
+    setTimeout(function () { try { if (window.__FAIL__ === n) throw new Error('Simulated server failure'); var v = SERVER[n].apply(null, a); if (ok) ok(v); } catch (e) { if (fail) fail(e); } }, window.__DELAY__ || 30); };
   });
   return r;
 })(null, null) } };
@@ -1011,8 +1041,8 @@ function openAdd(pre) {
   STATE.fromNote = pre.fromNote || null;
   $('add-title').textContent = pre.fromNote ? 'Task from a note' : pre.project ? 'Update: ' + pre.project : 'New task';
   $('f-item').value = pre.item || ''; $('f-project').value = pre.project || ''; $('f-stream').value = pre.stream || ''; $('f-kind').value = pre.kind || '';
-  $('f-status').value = pre.status || 'Not yet Started'; $('f-date').value = M.asOf; $('f-for').value = pre.who || '';
-  $('f-notes').value = pre.notes || ''; $('f-link').value = ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
+  $('f-status').value = pre.status || 'Not yet Started'; $('f-date').value = pre.date || M.asOf; $('f-for').value = pre.who || '';
+  $('f-notes').value = pre.notes || ''; $('f-link').value = pre.link || ''; $('f-msg').textContent = ''; $('f-save').disabled = false;
   var d = $('add-dlg');
   if (d.showModal) d.showModal(); else d.setAttribute('open', '');
   $('f-item').focus();
@@ -1026,15 +1056,25 @@ function saveTask(e) {
     status: $('f-status').value, date: $('f-date').value, 'for': $('f-for').value.trim(), notes: $('f-notes').value.trim(), link: $('f-link').value.trim(),
     fromNote: STATE.fromNote };
   if (!task.item) { $('f-msg').innerHTML = '<span class="err">Give it a name.</span>'; $('f-item').focus(); return; }
-  $('f-save').disabled = true; $('f-msg').textContent = 'Saving…';
-  google.script.run.withSuccessHandler(function (s) {
-    start(JSON.parse(s));
-    closeAdd();
-    toast('Saved: ' + task.item);
-  }).withFailureHandler(function (err) {
-    $('f-msg').innerHTML = '<span class="err">' + esc(err.message || err) + '</span>';
-    $('f-save').disabled = false;
-  }).addTask(JSON.stringify(task));
+  // the task is on the page and the form is closed now; the server confirms in the background
+  var row = P.entries.reduce(function (m, r) { return Math.max(m, r[10] || 0); }, 1) + 1;
+  var entry = [task.date || M.asOf, task.item, task.project, task.stream, task.kind, task.status, task.notes, '', task.link, task['for'], row];
+  var note = task.fromNote ? noteById(task.fromNote) : null, old = note ? note.slice() : null;
+  P.entries.push(entry);
+  if (note) { note[4] = 'Made a task'; note[5] = task.item; }
+  closeAdd(); start(P); toast('Saving: ' + task.item);
+  rpc('addTask', task, function (r) {
+    restore(entry, r.entry);  // the row as the server wrote it
+    if (note && r.note) note[2] = r.note.updated;
+    start(P); toast('Saved: ' + task.item);
+  }, function (m) {
+    P.entries.splice(P.entries.indexOf(entry), 1);  // not saved: back off the page, and the form comes back as it was
+    if (note) restore(note, old);
+    start(P);
+    openAdd({ fromNote: task.fromNote, item: task.item, project: task.project, stream: task.stream, kind: task.kind, status: task.status, who: task['for'],
+      notes: task.notes, date: task.date, link: task.link });
+    $('f-msg').innerHTML = '<span class="err">Not saved: ' + esc(m) + '</span>';
+  });
 }
 
 function toast(text) {
@@ -1201,14 +1241,14 @@ function renderNotes() {
     return '<button data-f="' + f + '" aria-pressed="' + (f === STATE.noteFilter) + '">' + esc(f) + ' · ' + (N.counts[f] || 0) + '</button>';
   }).join('');
   $('n-list').innerHTML = N.list.length ? N.list.map(function (n) {
-    var editing = STATE.editing === n.id;
+    var editing = STATE.editing === n.id, saving = /^tmp/.test(n.id);
     return '<div class="card note-card st-' + n.state.replace(/ /g, '-') + '" data-id="' + esc(n.id) + '">' +
       (editing ? '<textarea maxlength="5000" class="n-edit">' + esc(n.text) + '</textarea><div class="crow"><button class="btn" type="button" data-act="save-edit">Save</button>' +
         '<button class="btn ghost" type="button" data-act="cancel-edit">Cancel</button></div>'
         : '<div class="txt">' + esc(n.text) + '</div>') +
       (n.state === 'Made a task' && n.task ? '<div class="tasked">Made a task: ' + esc(n.task) + '</div>' : '') +
-      '<div class="when">' + esc(n.created) + (n.updated && n.updated !== n.created ? ' · edited ' + esc(n.updated) : '') + '</div>' +
-      (editing ? '' : '<div class="acts">' +
+      '<div class="when">' + (saving ? 'Saving…' : esc(n.created) + (n.updated && n.updated !== n.created ? ' · edited ' + esc(n.updated) : '')) + '</div>' +
+      (editing || saving ? '' : '<div class="acts">' +
         (n.state !== 'Made a task' ? '<button type="button" class="linkbtn" data-act="task">Make a task</button>' : '') +
         '<button type="button" class="linkbtn" data-act="edit">Edit</button>' +
         (n.state === 'Archived' ? '<button type="button" class="linkbtn" data-act="reopen">Reopen</button>' : '<button type="button" class="linkbtn" data-act="archive">Archive</button>') +
@@ -1216,36 +1256,55 @@ function renderNotes() {
   }).join('') : '<p class="empty">' + (STATE.noteFilter === 'Open' ? 'No open notes - jot one down above.' : 'Nothing here.') + '</p>';
 }
 
-/** A server call that redraws with the payload it returns; fail(message) on an error. */
-function call(fn, arg, done, fail) {
-  google.script.run.withSuccessHandler(function (s) { start(JSON.parse(s)); if (done) done(); })
-    .withFailureHandler(function (e) { if (fail) fail(e.message || String(e)); else toast(e.message || String(e)); })[fn](JSON.stringify(arg));
+/**
+ * A server call. The page already shows the change, so nothing is redrawn from the reply: ok(reply) takes what the server
+ * confirms (ids, stamps), fail(message) undoes the change on the page.
+ */
+function rpc(fn, arg, ok, fail) {
+  google.script.run.withSuccessHandler(function (s) { ok(JSON.parse(s)); })
+    .withFailureHandler(function (e) { fail(e.message || String(e)); })[fn](JSON.stringify(arg));
 }
 
+function stampNow() {
+  var d = new Date(), p = function (n) { return ('0' + n).slice(-2); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function noteById(id) { return P.notes.filter(function (n) { return n[0] === id; })[0]; }
+function restore(arr, old) { for (var i = 0; i < old.length; i++) arr[i] = old[i]; }
+
+/** A note is on the page and the box is clear the moment you save; the server confirms in the background. */
 function addNote() {
   var text = $('n-text').value.trim();
   if (!text) { $('n-msg').innerHTML = '<span class="err">Write something first.</span>'; return; }
-  $('n-save').disabled = true; $('n-msg').textContent = 'Saving…';
-  call('saveNote', { text: text }, function () {
-    $('n-text').value = ''; draft(''); $('n-msg').textContent = ''; $('n-save').disabled = false; STATE.noteFilter = 'Open'; renderNotes(); toast('Note saved');
-  }, function (m) { $('n-msg').innerHTML = '<span class="err">' + esc(m) + '</span>'; $('n-save').disabled = false; });
+  var at = stampNow(), note = ['tmp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at, at, text, 'Open', ''];
+  P.notes.unshift(note);
+  $('n-text').value = ''; draft(''); $('n-msg').textContent = ''; STATE.noteFilter = 'Open'; renderNotes();
+  rpc('saveNote', { text: text }, function (r) {
+    note[0] = r.id; note[1] = r.created; note[2] = r.updated; renderNotes();
+  }, function (m) {
+    P.notes.splice(P.notes.indexOf(note), 1);  // not saved: take it off the page and give the words back to the box
+    var box = $('n-text'); box.value = box.value ? text + '\n\n' + box.value : text; draft(box.value);
+    $('n-msg').innerHTML = '<span class="err">Not saved: ' + esc(m) + '</span>'; toast('Note not saved - it is back in the box'); renderNotes();
+  });
 }
 
 function noteAction(e) {
   var b = e.target.closest('[data-act]'), card = e.target.closest('[data-id]');
   if (!b || !card) return;
-  var id = card.dataset.id, n = Model.notes(P.notes, 'All').list.filter(function (x) { return x.id === id; })[0], act = b.dataset.act;
+  var id = card.dataset.id, raw = noteById(id), n = Model.notes(P.notes, 'All').list.filter(function (x) { return x.id === id; })[0], act = b.dataset.act;
+  if (!raw || /^tmp/.test(id)) return;  // not confirmed by the server yet
   if (act === 'task') return openAdd({ fromNote: id, item: n.title, notes: n.rest });
   if (act === 'edit') { STATE.editing = id; renderNotes(); $('n-list').querySelector('textarea').focus(); return; }
   if (act === 'cancel-edit') { STATE.editing = null; renderNotes(); return; }
+  var old = raw.slice(), undo = function (m) { restore(raw, old); renderNotes(); toast('Not saved: ' + m); };
   if (act === 'save-edit') {
     var text = card.querySelector('textarea').value.trim();
     if (!text) return toast('A note cannot be empty - archive it instead.');
-    b.disabled = true;
-    return call('saveNote', { id: id, text: text }, function () { STATE.editing = null; renderNotes(); toast('Note updated'); });
+    raw[3] = text; STATE.editing = null; renderNotes(); toast('Note updated');
+    return rpc('saveNote', { id: id, text: text }, function (r) { raw[2] = r.updated; renderNotes(); }, undo);
   }
-  b.disabled = true;
-  call('noteState', { id: id, state: act === 'archive' ? 'Archived' : 'Open' }, function () { toast(act === 'archive' ? 'Archived' : 'Reopened'); });
+  raw[4] = act === 'archive' ? 'Archived' : 'Open'; renderNotes(); toast(act === 'archive' ? 'Archived' : 'Reopened');
+  rpc('noteState', { id: id, state: raw[4] }, function (r) { raw[2] = r.updated; renderNotes(); }, undo);
 }
 
 /** The unsaved note survives a reload - in this browser only (a convenience; it may be unavailable). */

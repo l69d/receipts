@@ -16,6 +16,8 @@ function fakeServices(grids, user, editors, DateCtor, evaluate, log) {
   function out(sheet, v) {
     if (v && typeof v === 'object' && v.$d) { var p = v.$d.split('-'); return new D(+p[0], p[1] - 1, +p[2]); }
     if (typeof v === 'string' && v[0] === '=' && evaluate) return evaluate(grids, sheet, v);
+    // as Sheets: a leading ' only marks the cell as text - it is not part of what getValues returns
+    if (typeof v === 'string' && v[0] === "'") return v.slice(1);
     return v === undefined ? '' : v;
   }
   function a1(s) {
@@ -24,7 +26,7 @@ function fakeServices(grids, user, editors, DateCtor, evaluate, log) {
     var r = +m[2], c = col(m[1]);  // 'A2:A' runs to the sheet's last row (1000)
     return [r, c, m[3] ? (m[4] ? +m[4] : 1000) - r + 1 : 1, m[3] ? col(m[3]) - c + 1 : 1];
   }
-  var ids = {};
+  var ids = {}, cache = {};
   function sheet(name) {
     var g = grids[name], me;
     if (!(name in ids)) ids[name] = Object.keys(ids).length * 1000 + 7;
@@ -77,6 +79,7 @@ function fakeServices(grids, user, editors, DateCtor, evaluate, log) {
     SpreadsheetApp: recorder({ getActiveSpreadsheet: function () { return book; }, flush: function () {} }, 'SpreadsheetApp'),
     Session: { getActiveUser: function () { return { getEmail: function () { return user || ''; } }; }, getScriptTimeZone: function () { return 'Asia/Kolkata'; } },
     LockService: { getScriptLock: function () { return { waitLock: function () {}, releaseLock: function () {} }; } },
+    CacheService: { getScriptCache: function () { return { get: function (k) { return k in cache ? cache[k] : null; }, put: function (k, v) { cache[k] = v; } }; } },
     ScriptApp: recorder({ getProjectTriggers: function () { return []; }, getService: function () { return { getUrl: function () { return 'https://script.google.com/macros/s/fake/exec'; } }; } }, 'ScriptApp'),
     Charts: recorder({}, 'Charts'),
     ContentService: recorder({ createTextOutput: function (s) { var o = recorder({ text: s }, 'TextOutput', function () { return o; }); return o; } }, 'ContentService'),

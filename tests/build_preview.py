@@ -146,7 +146,7 @@ def main():
 var __DATA__ = null;
 var SERVER = (function () {
   var S = fakeServices(__GRIDS__, %s, [%s]);
-  var SpreadsheetApp = S.SpreadsheetApp, Session = S.Session, LockService = S.LockService;
+  var SpreadsheetApp = S.SpreadsheetApp, Session = S.Session, LockService = S.LockService, CacheService = S.CacheService;
   var Utilities = { formatDate: fakeFormatDate };
 %s
   CLOCK = new Date(%d, %d, %d, 18, 0);
@@ -155,7 +155,9 @@ var SERVER = (function () {
 var google = { script: { run: (function runner(ok, fail) {
   var r = { withSuccessHandler: function (f) { return runner(f, fail); }, withFailureHandler: function (f) { return runner(ok, f); } };
   ['getData', 'addTask', 'saveNote', 'noteState'].forEach(function (n) {
-    r[n] = function () { var a = arguments; setTimeout(function () { try { var v = SERVER[n].apply(null, a); if (ok) ok(v); } catch (e) { if (fail) fail(e); } }, 30); };
+    r[n] = function () { var a = arguments; // window.__DELAY__ (ms) slows the fake server, window.__FAIL__ (a function name) makes it fail - the suites use both to prove the page
+    // answers at once however slow or unreliable the server is
+    setTimeout(function () { try { if (window.__FAIL__ === n) throw new Error('Simulated server failure'); var v = SERVER[n].apply(null, a); if (ok) ok(v); } catch (e) { if (fail) fail(e); } }, window.__DELAY__ || 30); };
   });
   return r;
 })(null, null) } };
